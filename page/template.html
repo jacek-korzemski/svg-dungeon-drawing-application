@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="{{lang}}">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{title}}</title>
+    <meta name="description" content="{{description}}" />
+    <link rel="canonical" href="{{canonical}}" />
+    <link rel="alternate" hreflang="pl" href="{{urlPl}}" />
+    <link rel="alternate" hreflang="en" href="{{urlEn}}" />
+    <link rel="alternate" hreflang="x-default" href="{{urlPl}}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="{{title}}" />
+    <meta property="og:description" content="{{description}}" />
+    <meta property="og:url" content="{{canonical}}" />
+    <meta property="og:image" content="{{ogImage}}" />
+    <meta property="og:locale" content="{{ogLocale}}" />
+    <meta property="og:locale:alternate" content="{{ogLocaleAlt}}" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{{title}}" />
+    <meta name="twitter:description" content="{{description}}" />
+    <meta name="twitter:image" content="{{ogImage}}" />
+    <meta name="theme-color" content="#141619" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <a class="brand" href="{{homePath}}" aria-label="{{navHome}}">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 4h7v6h9v10H4z" />
+          <path d="M11 10v4" stroke-dasharray="2 2" />
+        </svg>
+        Jinkline
+      </a>
+      <nav class="lang" aria-label="Language">
+        <a href="/" hreflang="pl" lang="pl" {{plCurrent}}>PL</a>
+        <a href="/en/" hreflang="en" lang="en" {{enCurrent}}>EN</a>
+      </nav>
+      <a class="button" href="/build/">{{cta}}</a>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">{{eyebrow}}</p>
+          <h1>{{heroTitle}}</h1>
+          <p class="lead">{{heroLead}}</p>
+          <div class="actions">
+            <a class="button" href="/build/">{{cta}}</a>
+            <a class="button ghost" href="#use">{{ctaSecondary}}</a>
+          </div>
+        </div>
+        <figure>
+          <button type="button" data-zoom aria-label="{{zoom}}">
+            <img src="/img/crypt.webp" alt="{{heroAlt}}" width="1265" height="776" />
+          </button>
+          <figcaption>{{heroCaption}}</figcaption>
+        </figure>
+      </section>
+
+      <section class="block" id="features">
+        <div class="section-head">
+          <h2>{{featuresTitle}}</h2>
+          <p>{{featuresLead}}</p>
+        </div>
+        <div class="cards">{{features}}</div>
+      </section>
+
+      <section class="block wide-shot">
+        <figure>
+          <button type="button" data-zoom aria-label="{{zoom}}">
+            <img src="/img/settlement.webp" alt="{{settlementAlt}}" width="1265" height="776" />
+          </button>
+          <figcaption>{{settlementCaption}}</figcaption>
+        </figure>
+      </section>
+
+      <section class="block" id="use">
+        <h2>{{stepsTitle}}</h2>
+        <ol class="steps">{{steps}}</ol>
+      </section>
+
+      <section class="block tips">
+        <h2>{{tipsTitle}}</h2>
+        <ul>{{tips}}</ul>
+      </section>
+
+      <section class="block" id="export">
+        <div class="section-head">
+          <h2>{{exportTitle}}</h2>
+          <p>{{exportLead}}</p>
+        </div>
+        <div class="export-layout">
+          <figure>
+            <button type="button" data-zoom aria-label="{{zoom}}">
+              <img src="/img/export.webp" alt="{{exportAlt}}" width="1265" height="776" />
+            </button>
+            <figcaption>{{exportCaption}}</figcaption>
+          </figure>
+          <div class="formats">{{exports}}</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p>{{footer}}</p>
+      <a class="button" href="/build/">{{cta}}</a>
+    </footer>
+
+    <dialog id="viewer">
+      <form method="dialog">
+        <button class="button ghost" type="submit">{{close}}</button>
+      </form>
+      <img id="viewer-img" alt="" />
+    </dialog>
+    <script src="/main.js"></script>
+  </body>
+</html>
