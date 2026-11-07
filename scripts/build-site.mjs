@@ -6,7 +6,20 @@ import { copy } from "../page/copy.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
 const origin = (process.env.SITE_URL || "https://domena.pl").replace(/\/+$/, "");
+// Pages project sites live under /<repo>. SITE_URL already includes that prefix.
+const base = siteBase(process.env.BASE_PATH || "");
 const template = fs.readFileSync(path.join(root, "page", "template.html"), "utf8");
+
+function siteBase(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed || trimmed === "/") return "";
+  return `/${trimmed.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function applyBasePath(html) {
+  if (!base) return html;
+  return html.replace(/(\s(?:href|src)=")\//g, `$1${base}/`);
+}
 
 function esc(value) {
   return String(value).replace(/[&<>"']/g, (char) => {
@@ -98,8 +111,8 @@ function copyFile(from, to) {
 }
 
 fs.mkdirSync(path.join(dist, "en"), { recursive: true });
-fs.writeFileSync(path.join(dist, "index.html"), render(copy.pl));
-fs.writeFileSync(path.join(dist, "en", "index.html"), render(copy.en));
+fs.writeFileSync(path.join(dist, "index.html"), applyBasePath(render(copy.pl)));
+fs.writeFileSync(path.join(dist, "en", "index.html"), applyBasePath(render(copy.en)));
 copyFile(path.join(root, "page", "styles.css"), path.join(dist, "styles.css"));
 copyFile(path.join(root, "page", "main.js"), path.join(dist, "main.js"));
 
@@ -112,4 +125,4 @@ if (fs.existsSync(imgDir)) {
 
 console.log(`Landing: ${origin}/`);
 console.log(`English: ${origin}/en/`);
-console.log("Editor:  /build/");
+console.log(`Editor:  ${origin}/build/`);
