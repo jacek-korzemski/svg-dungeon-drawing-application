@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import {
   Check,
   Code2,
+  Dices,
   Download,
   FileJson,
   FolderOpen,
@@ -35,6 +36,7 @@ interface TopBarProps {
   showGrid: boolean;
   onToggleGrid: () => void;
   onLoadPreset: (preset: PresetId) => void;
+  onOpenRandomGenerator: () => void;
   themeId: MapThemeId;
   onChangeTheme: (themeId: MapThemeId) => void;
   onExportSvg: () => void;
@@ -59,6 +61,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   showGrid,
   onToggleGrid,
   onLoadPreset,
+  onOpenRandomGenerator,
   themeId,
   onChangeTheme,
   onExportSvg,
@@ -144,6 +147,21 @@ export const TopBar: React.FC<TopBarProps> = ({
             </>
           )}
         </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setPresetMenuOpen(false);
+            setThemeMenuOpen(false);
+            setExportMenuOpen(false);
+            onOpenRandomGenerator();
+          }}
+          className="flex items-center gap-1.5 rounded border border-[#2D333D] bg-[#1C1F24] px-2.5 py-1.5 text-xs font-medium text-[#D1D5DB] transition-colors hover:bg-[#252A32]"
+          title={t('topBar.randomMapTitle')}
+        >
+          <Dices className="h-3.5 w-3.5 text-indigo-400" />
+          <span className="hidden md:inline">{t('topBar.randomMap')}</span>
+        </button>
 
         <div className="relative">
           <button

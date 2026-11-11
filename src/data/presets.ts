@@ -167,6 +167,9 @@ export const SVG_PROP_CATALOG: SvgPropCatalogEntry[] = [
   { id: 'pillar', category: 'nature', widthPx: 56, heightPx: 56 },
   { id: 'boulder', category: 'nature', widthPx: 72, heightPx: 64 },
   { id: 'campfire', category: 'nature', widthPx: 64, heightPx: 64 },
+  { id: 'tree', category: 'nature', widthPx: 128, heightPx: 128 },
+  { id: 'bush', category: 'nature', widthPx: 56, heightPx: 56 },
+  { id: 'well', category: 'furniture', widthPx: 64, heightPx: 64 },
 ];
 
 export const DOOR_TYPE_OPTIONS: DoorType[] = [

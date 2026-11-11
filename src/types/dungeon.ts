@@ -88,7 +88,10 @@ export type SvgPropId =
   | 'statue'
   | 'weapon_rack'
   | 'boulder'
-  | 'campfire';
+  | 'campfire'
+  | 'tree'
+  | 'bush'
+  | 'well';
 
 export type PropCategoryId = 'furniture' | 'treasure' | 'nature';
 

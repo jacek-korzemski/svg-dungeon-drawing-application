@@ -1027,7 +1027,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                       {/* Mask that blocks the floor interior so crosshatching ONLY renders outside walls */}
                       <mask id={maskId}>
                         <rect x={-worldExtent} y={-worldExtent} width={worldExtent * 2} height={worldExtent * 2} fill="white" />
-                        <path d={floorPath} fill="black" fillRule="evenodd" />
+                        {renderedLayers.map(({ layer: maskLayer, floorPath: maskPath }) => {
+                          if (!maskLayer.visible || !maskPath || layerEnvironment(maskLayer) === 'exterior') {
+                            return null;
+                          }
+                          return (
+                            <path key={maskLayer.id} d={maskPath} fill="black" fillRule="evenodd" />
+                          );
+                        })}
                       </mask>
                       <clipPath id={clipId}>
                         <path d={floorPath} fillRule="evenodd" />

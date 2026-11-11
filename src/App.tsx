@@ -3,6 +3,7 @@ import { localizePresetDocument, useI18n } from './i18n';
 import { LeftToolbar } from './components/LeftToolbar';
 import { MapCanvas } from './components/MapCanvas';
 import { RightInspector } from './components/RightInspector';
+import { RandomMapModal } from './components/RandomMapModal';
 import { SvgInspectorModal } from './components/SvgInspectorModal';
 import { TopBar } from './components/TopBar';
 import { createEmptyLayer, createPresetDungeon, PresetId, SVG_PROP_CATALOG } from './data/presets';
@@ -94,6 +95,7 @@ export function App() {
 
   // Modals & notifications
   const [svgInspectorOpen, setSvgInspectorOpen] = useState(false);
+  const [randomModalOpen, setRandomModalOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const viewportRef = useRef<SVGGElement | null>(null);
@@ -738,6 +740,22 @@ export function App() {
     [commitDocChange]
   );
 
+  const handleReorderLayers = useCallback(
+    (layerId: string, toIndex: number) => {
+      commitDocChange((prev) => {
+        const from = prev.layers.findIndex((layer) => layer.id === layerId);
+        if (from < 0 || from === toIndex) return prev;
+        const bounded = Math.max(0, Math.min(prev.layers.length - 1, toIndex));
+        if (from === bounded) return prev;
+        const layers = prev.layers.slice();
+        const [moved] = layers.splice(from, 1);
+        layers.splice(bounded, 0, moved);
+        return { ...prev, layers };
+      });
+    },
+    [commitDocChange]
+  );
+
   const handleToggleLayerVisibility = useCallback(
     (layerId: string) => {
       commitDocChange((prev) => ({
@@ -765,6 +783,19 @@ export function App() {
   );
 
   // Preset & JSON loading
+  const handleApplyGeneratedMap = useCallback(
+    (next: DungeonDocument) => {
+      setPast((p) => [...p.slice(-(MAX_HISTORY - 1)), doc]);
+      setFuture([]);
+      setDoc(next);
+      lastCommittedDocRef.current = next;
+      setSelectedEntity(null);
+      fitViewToDocument(next);
+      showToast(t('toast.randomMapGenerated', { title: next.title }));
+    },
+    [doc, fitViewToDocument, showToast, t]
+  );
+
   const handleLoadPreset = useCallback(
     (preset: PresetId) => {
       const next = localizePresetDocument(createPresetDungeon(preset), preset, messages);
@@ -859,6 +890,7 @@ export function App() {
         showGrid={doc.showGrid}
         onToggleGrid={() => setDoc((prev) => ({ ...prev, showGrid: !prev.showGrid }))}
         onLoadPreset={handleLoadPreset}
+        onOpenRandomGenerator={() => setRandomModalOpen(true)}
         themeId={doc.themeId}
         onChangeTheme={handleChangeTheme}
         onExportSvg={handleExportSvg}
@@ -994,6 +1026,7 @@ export function App() {
           exteriorWallTowers={exteriorWallTowers}
           onToggleExteriorWallTowers={() => setExteriorWallTowers((value) => !value)}
           onDeleteLayer={handleDeleteLayer}
+          onReorderLayers={handleReorderLayers}
           onToggleLayerVisibility={handleToggleLayerVisibility}
           onRenameLayer={handleRenameLayer}
           onUpdateEntity={handleUpdateEntity}
@@ -1001,6 +1034,13 @@ export function App() {
           onDuplicateEntity={handleDuplicateEntity}
         />
       </div>
+
+      <RandomMapModal
+        isOpen={randomModalOpen}
+        themeId={doc.themeId}
+        onClose={() => setRandomModalOpen(false)}
+        onGenerated={handleApplyGeneratedMap}
+      />
 
       <SvgInspectorModal
         isOpen={svgInspectorOpen}

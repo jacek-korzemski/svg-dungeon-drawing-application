@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   FlipHorizontal2,
+  GripVertical,
   Hash,
   Layers,
   PaintBucket,
@@ -62,6 +63,26 @@ import {
   WallStylePreviewSvg,
 } from './SvgPropArtwork';
 
+type LayerDrag = {
+  id: string;
+  from: number;
+  over: number;
+};
+
+/** `over` is the slot before removal. Shifting past the original index lands one lower. */
+function layerDropIndex(from: number, over: number): number {
+  return from < over ? over - 1 : over;
+}
+
+function slotIndexFromPoint(list: HTMLElement | null, clientY: number): number {
+  const rows = list?.querySelectorAll<HTMLElement>('[data-layer-row]') ?? [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const rect = rows[index].getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) return index;
+  }
+  return rows.length;
+}
+
 interface RightInspectorProps {
   doc: DungeonDocument;
   activeTool: ToolType;
@@ -114,6 +135,7 @@ interface RightInspectorProps {
   onAddLayer: (environment: LayerEnvironment) => void;
   onSetLayerEnvironment: (layerId: string, environment: LayerEnvironment) => void;
   onDeleteLayer: (layerId: string) => void;
+  onReorderLayers: (layerId: string, toIndex: number) => void;
   roadStyle: RoadStyle;
   onChangeRoadStyle: (style: RoadStyle) => void;
   exteriorWallStyle: ExteriorWallStyle;
@@ -181,6 +203,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
   onAddLayer,
   onSetLayerEnvironment,
   onDeleteLayer,
+  onReorderLayers,
   roadStyle,
   onChangeRoadStyle,
   exteriorWallStyle,
@@ -197,8 +220,31 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
   const [propTab, setPropTab] = useState<'svg' | 'png'>('svg');
   const [customPngs, setCustomPngs] = useState<BuiltinPngAsset[]>([]);
   const [layerMenuPos, setLayerMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [layerDrag, setLayerDrag] = useState<LayerDrag | null>(null);
   const newLayerButtonRef = useRef<HTMLButtonElement>(null);
   const layerMenuRef = useRef<HTMLDivElement>(null);
+  const layerListRef = useRef<HTMLDivElement>(null);
+  const layerDragRef = useRef<
+    | (LayerDrag & {
+        pointerId: number;
+        startX: number;
+        startY: number;
+        fromInput: boolean;
+        active: boolean;
+        html5: boolean;
+        committed: boolean;
+      })
+    | null
+  >(null);
+
+  useEffect(() => {
+    if (!layerDrag) return;
+    const previous = document.body.style.cursor;
+    document.body.style.cursor = 'grabbing';
+    return () => {
+      document.body.style.cursor = previous;
+    };
+  }, [layerDrag]);
 
   useEffect(() => {
     if (!layerMenuPos) return;
@@ -1483,37 +1529,236 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
             document.body
           )}
 
-        <div className="space-y-1">
-          {doc.layers.map((layer) => {
+        <div
+          ref={layerListRef}
+          className="space-y-1"
+        >
+          {doc.layers.map((layer, index) => {
             const isActive = layer.id === doc.activeLayerId;
             const environment = layerEnvironment(layer);
             const styleName =
               environment === 'exterior'
                 ? messages.buildingStyles[layer.buildingStyle ?? 'roof_tile'].name
                 : messages.wallStyles[layer.wallStyle].name;
+            const canReorder = doc.layers.length > 1;
+            const dropAt = layerDrag ? layerDropIndex(layerDrag.from, layerDrag.over) : null;
+            const showDropLine = layerDrag !== null && dropAt !== layerDrag.from;
+            const dropBefore = showDropLine && layerDrag.over === index;
+            const dropAfter = showDropLine && layerDrag.over === doc.layers.length && index === doc.layers.length - 1;
+
+            const rememberDragSlot = (clientY: number) => {
+              const drag = layerDragRef.current;
+              if (!drag || drag.committed) return;
+              const scroller = layerListRef.current?.parentElement;
+              if (scroller) {
+                const bounds = scroller.getBoundingClientRect();
+                if (clientY < bounds.top + 28) scroller.scrollTop -= 12;
+                else if (clientY > bounds.bottom - 28) scroller.scrollTop += 12;
+              }
+              const over = slotIndexFromPoint(layerListRef.current, clientY);
+              drag.active = true;
+              drag.over = over;
+              setLayerDrag((current) =>
+                current && current.id === drag.id && current.from === drag.from && current.over === over
+                  ? current
+                  : { id: drag.id, from: drag.from, over }
+              );
+            };
+
+            const commitLayerDrag = () => {
+              const drag = layerDragRef.current;
+              if (!drag || drag.committed || !drag.active) return;
+              drag.committed = true;
+              layerDragRef.current = null;
+              setLayerDrag(null);
+              const swallowClick = (clickEvent: MouseEvent) => {
+                clickEvent.preventDefault();
+                clickEvent.stopPropagation();
+                window.removeEventListener('click', swallowClick, true);
+              };
+              window.addEventListener('click', swallowClick, true);
+              window.setTimeout(() => window.removeEventListener('click', swallowClick, true), 50);
+              const toIndex = layerDropIndex(drag.from, drag.over);
+              if (toIndex !== drag.from) onReorderLayers(drag.id, toIndex);
+              onSelectActiveLayer(drag.id);
+            };
+
+            const cancelLayerDrag = () => {
+              if (!layerDragRef.current || layerDragRef.current.committed) return;
+              layerDragRef.current = null;
+              setLayerDrag(null);
+            };
+
+            const finishLayerDrag = (event: React.PointerEvent<HTMLDivElement>, commit: boolean) => {
+              const drag = layerDragRef.current;
+              if (!drag || drag.pointerId !== event.pointerId || drag.committed) return;
+              try {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+              } catch {
+                // The pointer is already gone when a native drag session ends.
+              }
+              if (drag.html5) return;
+              if (commit && drag.active) commitLayerDrag();
+              else cancelLayerDrag();
+            };
+
+            const moveLayerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+              const drag = layerDragRef.current;
+              if (!drag || drag.html5 || drag.pointerId !== event.pointerId) return;
+              if (!drag.active) {
+                const dx = event.clientX - drag.startX;
+                const dy = event.clientY - drag.startY;
+                if (drag.fromInput) {
+                  if (Math.abs(dy) < 8 || Math.abs(dx) > Math.abs(dy)) return;
+                  event.currentTarget.querySelector('input')?.blur();
+                } else if (Math.abs(dy) < 4) {
+                  return;
+                }
+                try {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                } catch {
+                  // Capture is optional; the row still receives the gesture.
+                }
+              }
+              rememberDragSlot(event.clientY);
+            };
 
             return (
               <div
                 key={layer.id}
+                data-layer-row
                 onClick={() => onSelectActiveLayer(layer.id)}
-                className={`group flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors ${
+                onPointerDown={(event) => {
+                  if (!canReorder || event.button !== 0) return;
+                  const target = event.target as HTMLElement;
+                  const fromInput = Boolean(target.closest('input'));
+                  if (target.closest('button') && !target.closest('[data-layer-grip]')) return;
+                  layerDragRef.current = {
+                    id: layer.id,
+                    from: index,
+                    over: index,
+                    pointerId: event.pointerId,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    fromInput,
+                    active: false,
+                    html5: false,
+                    committed: false,
+                  };
+                  if (fromInput) return;
+                  try {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  } catch {
+                    // A native drag session may already own the pointer.
+                  }
+                }}
+                onPointerMove={moveLayerDrag}
+                onPointerUp={(event) => finishLayerDrag(event, true)}
+                onPointerCancel={(event) => finishLayerDrag(event, false)}
+                onDragOver={(event) => {
+                  if (!layerDragRef.current?.html5) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                  rememberDragSlot(event.clientY);
+                }}
+                onDrop={(event) => {
+                  if (!layerDragRef.current?.html5) return;
+                  event.preventDefault();
+                  rememberDragSlot(event.clientY);
+                  commitLayerDrag();
+                }}
+                className={`group flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border transition-colors ${
+                  canReorder ? 'cursor-grab' : 'cursor-pointer'
+                } ${
+                  layerDrag?.id === layer.id ? 'opacity-45' : ''
+                } ${
+                  dropBefore ? 'shadow-[inset_0_2px_0_0_#818cf8]' : ''
+                } ${
+                  dropAfter ? 'shadow-[inset_0_-2px_0_0_#818cf8]' : ''
+                } ${
                   isActive
                     ? 'bg-indigo-600/15 border-indigo-500/60'
                     : 'bg-[#1C1F24] border-[#2D333D] hover:border-[#3A4250]'
                 }`}
               >
-                <div className="min-w-0 flex-1">
-                  <input
-                    type="text"
-                    value={layer.name}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => onRenameLayer(layer.id, e.target.value)}
-                    className="w-full bg-transparent text-xs font-medium text-[#F1F3F5] outline-none truncate"
-                  />
-                  <div className="text-[10px] text-[#9CA3AF] flex items-center gap-1.5">
-                    <span>
-                      {environment === 'exterior' ? t('layers.exterior') : t('layers.interior')} · {styleName}
-                    </span>
+                <div className="min-w-0 flex-1 flex items-center gap-1">
+                  {canReorder && (
+                    <button
+                      type="button"
+                      draggable
+                      data-layer-grip
+                      title={t('layers.reorder')}
+                      aria-label={t('layers.reorder')}
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = 'move';
+                        try {
+                          event.dataTransfer.setData('text/plain', layer.id);
+                        } catch {
+                          // Some drag sessions expose a locked data store.
+                        }
+                        const existing = layerDragRef.current;
+                        if (existing && existing.id === layer.id && !existing.committed) {
+                          existing.html5 = true;
+                          existing.active = true;
+                        } else {
+                          layerDragRef.current = {
+                            id: layer.id,
+                            from: index,
+                            over: index,
+                            pointerId: -1,
+                            startX: event.clientX,
+                            startY: event.clientY,
+                            fromInput: false,
+                            active: true,
+                            html5: true,
+                            committed: false,
+                          };
+                        }
+                        setLayerDrag({ id: layer.id, from: index, over: layerDragRef.current?.over ?? index });
+                      }}
+                      onDragEnd={(event) => {
+                        const drag = layerDragRef.current;
+                        if (!drag || drag.committed || drag.id !== layer.id) return;
+                        const moved = Math.abs(event.clientY - drag.startY) >= 4;
+                        const accepted = event.dataTransfer?.dropEffect === 'move';
+                        if (event.clientY <= 0 || (!moved && !accepted)) {
+                          cancelLayerDrag();
+                          return;
+                        }
+                        drag.html5 = true;
+                        drag.active = true;
+                        rememberDragSlot(event.clientY);
+                        commitLayerDrag();
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'ArrowUp' && index > 0) {
+                          event.preventDefault();
+                          onReorderLayers(layer.id, index - 1);
+                        } else if (event.key === 'ArrowDown' && index < doc.layers.length - 1) {
+                          event.preventDefault();
+                          onReorderLayers(layer.id, index + 1);
+                        }
+                      }}
+                      className="shrink-0 -ml-1 p-0.5 rounded text-[#6B7280] hover:text-white hover:bg-[#252A32] cursor-grab"
+                    >
+                      <GripVertical className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <input
+                      type="text"
+                      value={layer.name}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onRenameLayer(layer.id, e.target.value)}
+                      className="w-full bg-transparent text-xs font-medium text-[#F1F3F5] outline-none truncate cursor-text select-text"
+                    />
+                    <div className="text-[10px] text-[#9CA3AF] flex items-center gap-1.5">
+                      <span>
+                        {environment === 'exterior' ? t('layers.exterior') : t('layers.interior')} · {styleName}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -1527,7 +1772,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
                       );
                     }}
                     title={environment === 'exterior' ? t('layers.switchToInterior') : t('layers.switchToExterior')}
-                    className="px-1 py-0.5 rounded text-[10px] font-medium text-[#9CA3AF] hover:text-white hover:bg-[#252A32]"
+                    className="cursor-pointer px-1 py-0.5 rounded text-[10px] font-medium text-[#9CA3AF] hover:text-white hover:bg-[#252A32]"
                   >
                     {environment === 'exterior' ? t('layers.toDungeon') : t('layers.toGrounds')}
                   </button>
@@ -1537,7 +1782,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
                       onToggleLayerVisibility(layer.id);
                     }}
                     title={layer.visible ? t('layers.hide') : t('layers.show')}
-                    className="p-1 rounded hover:bg-[#252A32] text-[#9CA3AF] hover:text-white"
+                    className="cursor-pointer p-1 rounded hover:bg-[#252A32] text-[#9CA3AF] hover:text-white"
                   >
                     {layer.visible ? (
                       <Eye className="w-3.5 h-3.5" />
@@ -1552,7 +1797,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
                         onDeleteLayer(layer.id);
                       }}
                       title={t('layers.remove')}
-                      className="p-1 rounded hover:bg-red-950/70 text-[#6B7280] hover:text-red-400"
+                      className="cursor-pointer p-1 rounded hover:bg-red-950/70 text-[#6B7280] hover:text-red-400"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

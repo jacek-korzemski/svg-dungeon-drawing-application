@@ -209,6 +209,51 @@ export const SvgPropArtwork: React.FC<PropArtworkProps> = ({
           <circle cx={0} cy={0} r={Math.min(hw, hh) * 0.24} fill="#FEF08A" />
         </g>
       );
+
+    case 'tree': {
+      const crowns = [
+        [0, -0.02, 0.46],
+        [-0.28, -0.16, 0.34],
+        [0.26, -0.18, 0.32],
+        [-0.16, 0.2, 0.3],
+        [0.22, 0.16, 0.28],
+        [0, -0.34, 0.26],
+        [0.08, 0.02, 0.22],
+      ] as const;
+      const r = Math.min(hw, hh);
+      return (
+        <g>
+          {crowns.map(([x, y, radius], index) => (
+            <circle key={`ink-${index}`} cx={x * r} cy={y * r} r={radius * r} fill="#4d7c3a" stroke={inkColor} strokeWidth={1.8} />
+          ))}
+          {crowns.map(([x, y, radius], index) => (
+            <circle key={`lit-${index}`} cx={x * r - 2} cy={y * r - 2} r={radius * r * 0.72} fill="#6b9c4b" />
+          ))}
+          <circle cx={0} cy={2} r={r * 0.16} fill="#2f5a27" />
+        </g>
+      );
+    }
+
+    case 'bush':
+      return (
+        <g>
+          <circle cx={-hw * 0.35} cy={hh * 0.05} r={Math.min(hw, hh) * 0.55} fill="#4d7c3a" stroke={inkColor} strokeWidth={1.6} />
+          <circle cx={hw * 0.32} cy={hh * 0.08} r={Math.min(hw, hh) * 0.48} fill="#4d7c3a" stroke={inkColor} strokeWidth={1.6} />
+          <circle cx={0} cy={-hh * 0.22} r={Math.min(hw, hh) * 0.5} fill="#4d7c3a" stroke={inkColor} strokeWidth={1.6} />
+          <circle cx={-hw * 0.35 - 1.5} cy={hh * 0.05 - 1.5} r={Math.min(hw, hh) * 0.32} fill="#6b9c4b" />
+          <circle cx={hw * 0.32 - 1.5} cy={hh * 0.08 - 1.5} r={Math.min(hw, hh) * 0.28} fill="#6b9c4b" />
+          <circle cx={-1.5} cy={-hh * 0.22 - 1.5} r={Math.min(hw, hh) * 0.3} fill="#6b9c4b" />
+        </g>
+      );
+
+    case 'well':
+      return (
+        <g>
+          <circle cx={0} cy={0} r={Math.min(hw, hh) * 0.82} fill="#a8a29e" stroke={inkColor} strokeWidth={1.8} />
+          <circle cx={0} cy={0} r={Math.min(hw, hh) * 0.48} fill="#3b82f6" fillOpacity={0.7} stroke={inkColor} strokeWidth={1.2} strokeDasharray="3 2" />
+          <rect x={-hw * 0.72} y={-3} width={width * 0.72} height={6} fill="#78350f" stroke={inkColor} strokeWidth={1.2} />
+        </g>
+      );
   }
 };
 
