@@ -1,6 +1,8 @@
 import React, { useRef, useState } from 'react';
 import {
+  Box,
   Check,
+  Diamond,
   Code2,
   Dices,
   Download,
@@ -13,13 +15,17 @@ import {
   Maximize2,
   Palette,
   Redo2,
+  RotateCcw,
+  RotateCw,
+  Square,
   Undo2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { MAP_THEMES, PresetId } from '../data/presets';
+import { MAP_THEMES, PresetId, resolveTheme, ThemeColorKey } from '../data/presets';
 import { useI18n, type Locale } from '../i18n';
 import { MapThemeId } from '../types/dungeon';
+import type { IsoViewMode } from '../utils/isoProjection';
 
 interface TopBarProps {
   title: string;
@@ -35,15 +41,28 @@ interface TopBarProps {
   onToggleSnap: () => void;
   showGrid: boolean;
   onToggleGrid: () => void;
+  viewMode: IsoViewMode;
+  onSetViewMode: (mode: IsoViewMode) => void;
+  onRotateIso: (delta: 1 | -1) => void;
+  wallHeightCells: number;
+  onWallHeightChange: (height: number) => void;
   onLoadPreset: (preset: PresetId) => void;
   onOpenRandomGenerator: () => void;
   themeId: MapThemeId;
+  themeOverrides?: Partial<Record<ThemeColorKey, string>>;
   onChangeTheme: (themeId: MapThemeId) => void;
+  onChangeThemeColor: (key: ThemeColorKey, value: string) => void;
+  onResetThemeColor: (key: ThemeColorKey) => void;
+  onResetThemeColors: () => void;
   onExportSvg: () => void;
   onExportPng: () => void;
   onExportJson: () => void;
   onImportJsonFile: (file: File) => void;
   onOpenSvgInspector: () => void;
+}
+
+function colorInputValue(value: string): string {
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000';
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -60,10 +79,19 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleSnap,
   showGrid,
   onToggleGrid,
+  viewMode,
+  onSetViewMode,
+  onRotateIso,
+  wallHeightCells,
+  onWallHeightChange,
   onLoadPreset,
   onOpenRandomGenerator,
   themeId,
+  themeOverrides,
   onChangeTheme,
+  onChangeThemeColor,
+  onResetThemeColor,
+  onResetThemeColors,
   onExportSvg,
   onExportPng,
   onExportJson,
@@ -74,7 +102,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const activeTheme = MAP_THEMES[themeId];
+  const activeTheme = resolveTheme(themeId, themeOverrides);
   const activeThemeName = messages.themes[themeId].name;
   const jsonInputRef = useRef<HTMLInputElement | null>(null);
   const presetItems: PresetId[] = ['starter', 'caverns', 'fortress', 'settlement', 'empty'];
@@ -82,31 +110,33 @@ export const TopBar: React.FC<TopBarProps> = ({
   return (
     <header className="h-12 px-3 bg-[#141619] border-b border-[#2D333D] flex items-center justify-between gap-2 z-30 shrink-0">
       {/* Left: Brand + Map Title + Preset Switcher */}
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="w-7 h-7 rounded-md bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
-            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.2">
-              <path d="M4 4h7v6h9v10H4z" />
-              <path d="M11 10v4" strokeDasharray="2 2" />
-            </svg>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="w-7 h-7 rounded-md bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <path d="M4 4h7v6h9v10H4z" />
+                <path d="M11 10v4" strokeDasharray="2 2" />
+              </svg>
+            </div>
+            <span className="font-display font-bold text-sm tracking-tight text-[#F1F3F5] hidden sm:inline">
+              Jinkline
+            </span>
           </div>
-          <span className="font-display font-bold text-sm tracking-tight text-[#F1F3F5] hidden sm:inline">
-            Jinkline
-          </span>
+
+          <span className="text-[#2D333D] hidden sm:inline">/</span>
+
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => onTitleChange(e.target.value)}
+            aria-label={t('topBar.mapName')}
+            className="min-w-0 bg-[#1C1F24] hover:bg-[#252A32] focus:bg-[#252A32] text-[#F1F3F5] text-xs font-medium px-2.5 py-1.5 rounded border border-transparent focus:border-indigo-500/60 outline-none w-44 sm:w-56 truncate transition-colors"
+          />
         </div>
 
-        <span className="text-[#2D333D] hidden sm:inline">/</span>
-
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => onTitleChange(e.target.value)}
-          aria-label={t('topBar.mapName')}
-          className="bg-[#1C1F24] hover:bg-[#252A32] focus:bg-[#252A32] text-[#F1F3F5] text-xs font-medium px-2.5 py-1.5 rounded border border-transparent focus:border-indigo-500/60 outline-none w-44 sm:w-56 truncate transition-colors"
-        />
-
         {/* Presets Dropdown */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             onClick={() => {
               setPresetMenuOpen((v) => !v);
@@ -156,14 +186,14 @@ export const TopBar: React.FC<TopBarProps> = ({
             setExportMenuOpen(false);
             onOpenRandomGenerator();
           }}
-          className="flex items-center gap-1.5 rounded border border-[#2D333D] bg-[#1C1F24] px-2.5 py-1.5 text-xs font-medium text-[#D1D5DB] transition-colors hover:bg-[#252A32]"
+          className="flex shrink-0 items-center gap-1.5 rounded border border-[#2D333D] bg-[#1C1F24] px-2.5 py-1.5 text-xs font-medium text-[#D1D5DB] transition-colors hover:bg-[#252A32]"
           title={t('topBar.randomMapTitle')}
         >
           <Dices className="h-3.5 w-3.5 text-indigo-400" />
           <span className="hidden md:inline">{t('topBar.randomMap')}</span>
         </button>
 
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             onClick={() => {
               setThemeMenuOpen((v) => !v);
@@ -184,7 +214,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           {themeMenuOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setThemeMenuOpen(false)} />
-              <div className="absolute left-0 mt-1.5 w-60 rounded-lg bg-[#1C1F24] border border-[#2D333D] shadow-2xl py-1.5 z-50">
+              <div className="absolute left-0 mt-1.5 w-72 max-h-[70vh] overflow-auto rounded-lg bg-[#1C1F24] border border-[#2D333D] shadow-2xl py-1.5 z-50">
                 <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
                   {t('topBar.themeHeading')}
                 </div>
@@ -210,6 +240,47 @@ export const TopBar: React.FC<TopBarProps> = ({
                     </button>
                   );
                 })}
+                <div className="mx-3 my-1.5 border-t border-[#2D333D]" />
+                {(
+                  [
+                    ['floorFill', 'topBar.paletteFloor'],
+                    ['wallFill', 'topBar.paletteWall'],
+                    ['inkStroke', 'topBar.paletteInk'],
+                    ['hatchStroke', 'topBar.paletteHatch'],
+                    ['floorGrid', 'topBar.paletteFloorGrid'],
+                    ['bgVoid', 'topBar.paletteVoid'],
+                    ['gridMajor', 'topBar.paletteGrid'],
+                    ['accentLabel', 'topBar.paletteLabel'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2 px-3 py-1">
+                    <input
+                      type="color"
+                      value={colorInputValue(activeTheme[key])}
+                      onChange={(event) => onChangeThemeColor(key, event.target.value)}
+                      className="h-5 w-7 shrink-0 cursor-pointer border-0 bg-transparent p-0"
+                    />
+                    <span className="flex-1 text-[11px] text-[#D1D5DB]">{t(label)}</span>
+                    {themeOverrides?.[key] && (
+                      <button
+                        type="button"
+                        onClick={() => onResetThemeColor(key)}
+                        className="text-[10px] text-[#9CA3AF] hover:text-[#F1F3F5]"
+                      >
+                        {t('topBar.paletteReset')}
+                      </button>
+                    )}
+                  </label>
+                ))}
+                <div className="px-3 pt-1.5">
+                  <button
+                    type="button"
+                    onClick={onResetThemeColors}
+                    className="w-full rounded border border-[#2D333D] px-2 py-1 text-[10px] text-[#9CA3AF] hover:border-[#3D4654] hover:text-[#F1F3F5]"
+                  >
+                    {t('topBar.paletteResetAll')}
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -217,7 +288,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       {/* Center: Undo/Redo + Grid/Snap Toggles + Zoom */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <div className="flex items-center bg-[#1C1F24] border border-[#2D333D] rounded-md p-0.5">
           <button
             onClick={onUndo}
@@ -261,6 +332,71 @@ export const TopBar: React.FC<TopBarProps> = ({
           </button>
         </div>
 
+        <div className="flex items-center rounded-md border border-[#2D333D] bg-[#1C1F24] p-0.5" role="group" aria-label={t('topBar.viewIsoTitle')}>
+          <button
+            type="button"
+            aria-pressed={viewMode === 'flat'}
+            title={t('topBar.view2dTitle')}
+            onClick={() => onSetViewMode('flat')}
+            className={`flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-semibold ${
+              viewMode === 'flat' ? 'bg-indigo-600 text-white' : 'text-[#9CA3AF] hover:text-[#F1F3F5]'
+            }`}
+          >
+            <Square className="h-3.5 w-3.5" />
+            <span className="hidden xl:inline">{t('topBar.view2d')}</span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === 'iso'}
+            title={t('topBar.viewIsoTitle')}
+            onClick={() => onSetViewMode('iso')}
+            className={`flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-semibold ${
+              viewMode === 'iso' ? 'bg-indigo-600 text-white' : 'text-[#9CA3AF] hover:text-[#F1F3F5]'
+            }`}
+          >
+            <Diamond className="h-3.5 w-3.5" />
+            <span className="hidden xl:inline">{t('topBar.viewIso')}</span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === '3d'}
+            title={t('topBar.view3dTitle')}
+            onClick={() => onSetViewMode('3d')}
+            className={`flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-semibold ${
+              viewMode === '3d' ? 'bg-indigo-600 text-white' : 'text-[#9CA3AF] hover:text-[#F1F3F5]'
+            }`}
+          >
+            <Box className="h-3.5 w-3.5" />
+            <span className="hidden xl:inline">{t('topBar.view3d')}</span>
+          </button>
+        </div>
+
+        {viewMode !== 'flat' && (
+          <div className="flex items-center gap-1 rounded-md border border-[#2D333D] bg-[#1C1F24] p-0.5">
+            <button type="button" title={t('topBar.rotateLeft')} onClick={() => onRotateIso(-1)} className="rounded p-1.5 text-[#D1D5DB] hover:bg-[#252A32]">
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+            <button type="button" title={t('topBar.rotateRight')} onClick={() => onRotateIso(1)} className="rounded p-1.5 text-[#D1D5DB] hover:bg-[#252A32]">
+              <RotateCw className="h-3.5 w-3.5" />
+            </button>
+            {viewMode === '3d' && (
+              <label className="flex items-center gap-1 px-1 text-[10px] text-[#9CA3AF]" title={t('topBar.wallHeight')}>
+                <input
+                  type="range"
+                  min={0.35}
+                  max={1.6}
+                  step={0.05}
+                  value={wallHeightCells}
+                  aria-label={t('topBar.wallHeight')}
+                  onChange={(event) => onWallHeightChange(Number(event.target.value))}
+                  className="w-14 accent-indigo-500"
+                />
+                <span className="w-7 font-mono-tech text-[#D1D5DB]">{wallHeightCells.toFixed(2)}</span>
+              </label>
+            )}
+          </div>
+        )}
+
         {/* Zoom Controls */}
         <div className="hidden sm:flex items-center bg-[#1C1F24] border border-[#2D333D] rounded-md p-0.5">
           <button
@@ -291,7 +427,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       {/* Right: SVG Code Inspector + Export Menu */}
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <div
           className="flex items-center bg-[#1C1F24] border border-[#2D333D] rounded-md p-0.5"
           role="group"

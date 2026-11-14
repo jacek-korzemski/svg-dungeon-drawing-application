@@ -60,6 +60,33 @@ export function weightedPick<T>(rng: Rng, items: readonly { value: T; weight: nu
   return items[items.length - 1].value;
 }
 
+export function deriveSeed(seed: number, label: string): number {
+  let h = (0x811c9dc5 ^ (seed >>> 0)) >>> 0;
+  for (let i = 0; i < label.length; i++) {
+    h ^= label.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return (mulberry32(h)() * 4294967296) >>> 0;
+}
+
+export function deriveRng(seed: number, label: string): Rng {
+  return { next: mulberry32(deriveSeed(seed, label)) };
+}
+
+export function makeDungeonRngs(seed: number, attempt: number): import('./dungeon/model').DungeonRngs {
+  const stream = (name: string) => deriveRng(seed, `a${attempt}:${name}`);
+  return {
+    layout: stream('layout'),
+    route: stream('route'),
+    style: stream('style'),
+    geometry: stream('geometry'),
+    doors: stream('doors'),
+    dress: stream('dress'),
+    texture: stream('texture'),
+    names: stream('names'),
+  };
+}
+
 export function pickFresh(rng: Rng, list: string[], used: Set<string>): string {
   const fresh = list.filter((name) => !used.has(name));
   const pool = fresh.length ? fresh : list;

@@ -137,22 +137,25 @@ export function FloorTextureStack({
   paints,
   clipId,
   draft,
+  idPrefix = '',
 }: {
   layerId: string;
   paints: TexturePaint[];
   clipId?: string;
   draft: TexturePaint | null;
+  /** Keeps mask ids unique when a second stack is mounted for another view. */
+  idPrefix?: string;
 }) {
   const visible = paints.filter(
     (paint) => (paint.kind === 'fill' ? paint.region.length > 0 : paint.dabs.length > 0)
   );
   if (!visible.length && !draft) return null;
-  const draftId = `tex-mask-draft-${layerId}`;
+  const draftId = `${idPrefix}tex-mask-draft-${layerId}`;
   return (
     <g clipPath={clipId ? `url(#${clipId})` : undefined}>
       <defs>
         {visible.map((paint) => (
-          <PaintMask key={paint.id} paint={paint} maskId={`tex-mask-${layerId}-${paint.id}`} />
+          <PaintMask key={paint.id} paint={paint} maskId={`${idPrefix}tex-mask-${layerId}-${paint.id}`} />
         ))}
         {draft && (
           <g data-export-ignore="true">
@@ -161,7 +164,7 @@ export function FloorTextureStack({
         )}
       </defs>
       {visible.map((paint) => (
-        <PaintFill key={paint.id} paint={paint} maskId={`tex-mask-${layerId}-${paint.id}`} />
+        <PaintFill key={paint.id} paint={paint} maskId={`${idPrefix}tex-mask-${layerId}-${paint.id}`} />
       ))}
       {draft && (
         <g data-export-ignore="true">

@@ -73,6 +73,8 @@ export type DoorType =
 
 export type StairType = 'straight' | 'spiral' | 'wide';
 
+export type PropArtwork = 'plane' | 'upright';
+
 export type SvgPropId =
   | 'barrel'
   | 'crate'
@@ -153,6 +155,8 @@ export interface DungeonLayer {
   wallStyle: WallStyle;
   hatchEnabled: boolean;
   floorColorOverride?: string;
+  wallFillOverride?: string;
+  inkStrokeOverride?: string;
   geometry: MultiPolygon2D;
   standaloneWalls: StandaloneWall[];
   texturePaints: TexturePaint[];
@@ -199,6 +203,13 @@ export interface PropItem {
   label: string;
   widthPx: number;
   heightPx: number;
+  /**
+   * Missing on older saves: the graphic lies on the map and shears with the isometric view.
+   * `upright` was placed in isometric view, so that view shows it straight and the flat plan shows the inverse shear.
+   */
+  artwork?: PropArtwork;
+  /** Quarter whose inverse shear is baked into an upright graphic. */
+  artworkQuarter?: 0 | 1 | 2 | 3;
 }
 
 export interface PropBrush {
@@ -236,6 +247,8 @@ export interface DungeonDocument {
   gridSize: number; // default 64px = 5ft
   feetPerCell: number; // default 5
   themeId: MapThemeId;
+  /** Colors that replace the active sheet theme. Missing keys keep the preset. */
+  themeOverrides?: Partial<Omit<MapTheme, 'id'>>;
   showGrid: boolean;
   layers: DungeonLayer[];
   activeLayerId: string;

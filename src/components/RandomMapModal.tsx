@@ -2,12 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { Dices, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import {
+  CONCRETE_ARCHETYPES,
   DEFAULT_RANDOM_MAP_CONFIG,
+  DUNGEON_ARCHETYPES,
   RandomMapConfig,
   RandomMapSize,
   RandomMapStage,
   generateRandomMap,
 } from '../utils/randomMapGenerator';
+import { ConcreteArchetype, DungeonArchetype } from '../utils/randomMap/dungeon/model';
 import { DungeonDocument, MapThemeId } from '../types/dungeon';
 
 const STORAGE_KEY = 'jinkline.randomMapConfig';
@@ -35,6 +38,15 @@ function readConfig(): RandomMapConfig {
     let dungeon = typeof parsed.dungeon === 'boolean' ? parsed.dungeon : DEFAULT_RANDOM_MAP_CONFIG.dungeon;
     let exterior = typeof parsed.exterior === 'boolean' ? parsed.exterior : DEFAULT_RANDOM_MAP_CONFIG.exterior;
     if (!dungeon && !exterior) dungeon = true;
+    const dungeonArchetype = DUNGEON_ARCHETYPES.includes(parsed.dungeonArchetype as DungeonArchetype)
+      ? (parsed.dungeonArchetype as DungeonArchetype)
+      : 'auto';
+    const dungeonArchetypes = Array.isArray(parsed.dungeonArchetypes)
+      ? parsed.dungeonArchetypes.filter(
+          (archetype): archetype is ConcreteArchetype =>
+            CONCRETE_ARCHETYPES.includes(archetype as ConcreteArchetype)
+        )
+      : [];
     return {
       dungeon,
       exterior,
@@ -42,6 +54,8 @@ function readConfig(): RandomMapConfig {
       maxExteriorLayers: clampInt(parsed.maxExteriorLayers, 1, 8, DEFAULT_RANDOM_MAP_CONFIG.maxExteriorLayers),
       useTextures: typeof parsed.useTextures === 'boolean' ? parsed.useTextures : DEFAULT_RANDOM_MAP_CONFIG.useTextures,
       size,
+      dungeonArchetype,
+      dungeonArchetypes,
     };
   } catch {
     return DEFAULT_RANDOM_MAP_CONFIG;
@@ -50,6 +64,19 @@ function readConfig(): RandomMapConfig {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function selectedArchetypes(config: RandomMapConfig): ConcreteArchetype[] {
+  if (config.dungeonArchetypes.length >= 1) return config.dungeonArchetypes;
+  return config.dungeonArchetype === 'auto' ? [] : [config.dungeonArchetype];
+}
+
+function toggleArchetype(config: RandomMapConfig, archetype: DungeonArchetype): RandomMapConfig {
+  if (archetype === 'auto') return { ...config, dungeonArchetype: 'auto', dungeonArchetypes: [] };
+  const selected = selectedArchetypes(config);
+  const next = selected.includes(archetype) ? selected.filter((item) => item !== archetype) : [...selected, archetype];
+  if (!next.length) return { ...config, dungeonArchetype: 'auto', dungeonArchetypes: [] };
+  return { ...config, dungeonArchetype: next[0], dungeonArchetypes: next };
 }
 
 export const RandomMapModal: React.FC<RandomMapModalProps> = ({ isOpen, themeId, onClose, onGenerated }) => {
@@ -183,6 +210,31 @@ export const RandomMapModal: React.FC<RandomMapModalProps> = ({ isOpen, themeId,
                 disabled={!config.dungeon}
                 onChange={(maxDungeonLayers) => setConfig((current) => ({ ...current, maxDungeonLayers }))}
               />
+            </Field>
+            <Field label={t('randomModal.layout')} disabled={!config.dungeon}>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {DUNGEON_ARCHETYPES.map((archetype) => {
+                  const selected = selectedArchetypes(config);
+                  const active = archetype === 'auto' ? selected.length === 0 : selected.includes(archetype);
+                  return (
+                    <button
+                      key={archetype}
+                      type="button"
+                      disabled={!config.dungeon}
+                      onClick={() => setConfig((current) => toggleArchetype(current, archetype))}
+                      className={`rounded-lg border px-2 py-2 text-left transition-colors disabled:cursor-not-allowed ${
+                        active ? 'border-indigo-500/70 bg-indigo-600/20' : 'border-[#2D333D] bg-[#141619] hover:border-[#3D4654]'
+                      }`}
+                    >
+                      <div className={`text-xs font-semibold ${active ? 'text-indigo-200' : 'text-[#F1F3F5]'}`}>
+                        {t(`randomModal.layouts.${archetype}.name`)}
+                      </div>
+                      <div className="text-[10px] text-[#9CA3AF]">{t(`randomModal.layouts.${archetype}.hint`)}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[10px] leading-snug text-[#9CA3AF]">{t('randomModal.mixHint')}</p>
             </Field>
             <Field label={t('randomModal.exteriorLayers')} disabled={!config.exterior}>
               <Segments

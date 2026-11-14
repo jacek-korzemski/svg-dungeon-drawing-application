@@ -44,7 +44,7 @@ function isRoof(style: BuildingStyle): boolean {
   return style === 'roof_tile' || style === 'roof_thatch' || style === 'roof_slate';
 }
 
-function BuildingShape({
+export function BuildingShape({
   floorPath,
   data,
   style,

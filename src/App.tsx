@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { localizePresetDocument, useI18n } from './i18n';
 import { LeftToolbar } from './components/LeftToolbar';
 import { MapCanvas } from './components/MapCanvas';
@@ -6,7 +6,7 @@ import { RightInspector } from './components/RightInspector';
 import { RandomMapModal } from './components/RandomMapModal';
 import { SvgInspectorModal } from './components/SvgInspectorModal';
 import { TopBar } from './components/TopBar';
-import { createEmptyLayer, createPresetDungeon, PresetId, SVG_PROP_CATALOG } from './data/presets';
+import { createEmptyLayer, createPresetDungeon, PresetId, SVG_PROP_CATALOG, ThemeColorKey } from './data/presets';
 import { defaultFloorTexturePath } from './data/textureLibrary';
 import {
   BuildingStyle,
@@ -41,7 +41,16 @@ import {
   downloadJsonProject,
   downloadPngFile,
   downloadSvgFile,
+  type ExportView,
 } from './utils/exportDungeon';
+import {
+  type CameraFrame,
+  type IsoQuarter,
+  type IsoViewMode,
+  panForWorldPoint,
+  projectBounds,
+  worldAtCanvasCenter,
+} from './utils/isoProjection';
 import { corridorPathToMultiPolygon, generateBuildingsInRegion, subtractGeometry, unionGeometry } from './utils/geometry';
 import { eraseRoadPolygons, eraseTexturePaints } from './utils/texturePaint';
 
@@ -92,6 +101,9 @@ export function App() {
   // Camera state
   const [zoom, setZoom] = useState(1.0);
   const [pan, setPan] = useState({ x: 40, y: 20 });
+  const [viewMode, setViewMode] = useState<IsoViewMode>('flat');
+  const [isoQuarter, setIsoQuarter] = useState<IsoQuarter>(0);
+  const [wallHeightCells, setWallHeightCells] = useState(0.85);
 
   // Modals & notifications
   const [svgInspectorOpen, setSvgInspectorOpen] = useState(false);
@@ -99,7 +111,21 @@ export function App() {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const viewportRef = useRef<SVGGElement | null>(null);
+  const isoViewportRef = useRef<SVGGElement | null>(null);
+  const canvasSizeRef = useRef({ width: 0, height: 0 });
   const lastCommittedDocRef = useRef<DungeonDocument>(doc);
+  const rememberCanvasSize = useCallback((width: number, height: number) => {
+    canvasSizeRef.current = { width, height };
+  }, []);
+
+  const canvasSize = useCallback(() => {
+    const size = canvasSizeRef.current;
+    if (size.width > 40 && size.height > 40) return size;
+    return {
+      width: Math.max(400, window.innerWidth - 360),
+      height: Math.max(300, window.innerHeight - 60),
+    };
+  }, []);
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -125,21 +151,59 @@ export function App() {
 
   // Center camera on bounds
   const fitViewToDocument = useCallback((targetDoc: DungeonDocument) => {
-    const bounds = computeDocumentBounds(targetDoc);
-    const availableW = Math.max(400, window.innerWidth - 360);
-    const availableH = Math.max(300, window.innerHeight - 60);
+    const canvas = canvasSize();
+    const grid = targetDoc.gridSize || 64;
+    const flat = computeDocumentBounds(targetDoc);
+    const bounds =
+      viewMode === 'flat'
+        ? flat
+        : projectBounds(
+            flat,
+            isoQuarter,
+            viewMode === '3d' ? Math.max(wallHeightCells * grid * 1.7, grid) : 0,
+            grid
+          );
     const fitZoom = Math.min(
       1.25,
-      Math.max(0.15, Math.min(availableW / bounds.width, availableH / bounds.height))
+      Math.max(0.15, Math.min(canvas.width / bounds.width, canvas.height / bounds.height))
     );
     const centerX = bounds.x + bounds.width / 2;
     const centerY = bounds.y + bounds.height / 2;
     setZoom(Number(fitZoom.toFixed(2)));
     setPan({
-      x: Math.round(availableW / 2 - centerX * fitZoom),
-      y: Math.round(availableH / 2 - centerY * fitZoom),
+      x: Math.round(canvas.width / 2 - centerX * fitZoom),
+      y: Math.round(canvas.height / 2 - centerY * fitZoom),
     });
-  }, []);
+  }, [canvasSize, isoQuarter, viewMode, wallHeightCells]);
+
+  const retargetPan = useCallback(
+    (from: CameraFrame, to: CameraFrame) => {
+      const canvas = canvasSize();
+      const world = worldAtCanvasCenter(pan, zoom, canvas, from);
+      setPan(panForWorldPoint(world, zoom, canvas, to));
+    },
+    [canvasSize, pan, zoom]
+  );
+
+  const setViewModeTo = useCallback(
+    (next: IsoViewMode) => {
+      if (next === viewMode) return;
+      retargetPan({ mode: viewMode, quarter: isoQuarter }, { mode: next, quarter: isoQuarter });
+      if (next === '3d') setSelectedEntity(null);
+      setViewMode(next);
+    },
+    [isoQuarter, retargetPan, viewMode]
+  );
+
+  const rotateIso = useCallback(
+    (delta: 1 | -1) => {
+      if (viewMode === 'flat') return;
+      const next = ((isoQuarter + delta + 4) % 4) as IsoQuarter;
+      retargetPan({ mode: viewMode, quarter: isoQuarter }, { mode: viewMode, quarter: next });
+      setIsoQuarter(next);
+    },
+    [isoQuarter, retargetPan, viewMode]
+  );
 
   useEffect(() => {
     setActivePropPreset((prev) => {
@@ -212,6 +276,18 @@ export function App() {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       const key = e.key.toLowerCase();
+      if (key === 'i') {
+        e.preventDefault();
+        setViewModeTo(viewMode === 'iso' ? 'flat' : 'iso');
+        return;
+      }
+      if (viewMode !== 'flat' && (e.key === '[' || e.key === ']')) {
+        e.preventDefault();
+        rotateIso(e.key === ']' ? 1 : -1);
+        return;
+      }
+      if (viewMode === '3d') return;
+
       const map: Record<string, ToolType> = {
         v: 'select',
         h: 'pan',
@@ -240,7 +316,7 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, rotateIso, setViewModeTo, viewMode]);
 
   // Carve or subtract floor geometry on active layer
   const handleCarveFloor = useCallback(
@@ -777,7 +853,52 @@ export function App() {
 
   const handleChangeTheme = useCallback(
     (themeId: MapThemeId) => {
-      commitDocChange((prev) => ({ ...prev, themeId }));
+      commitDocChange((prev) => ({ ...prev, themeId, themeOverrides: {} }));
+    },
+    [commitDocChange]
+  );
+
+  const handleChangeThemeColor = useCallback(
+    (key: ThemeColorKey, value: string) => {
+      commitDocChange((prev) => ({
+        ...prev,
+        themeOverrides: { ...prev.themeOverrides, [key]: value },
+      }));
+    },
+    [commitDocChange]
+  );
+
+  const handleResetThemeColor = useCallback(
+    (key: ThemeColorKey) => {
+      commitDocChange((prev) => {
+        const themeOverrides = { ...prev.themeOverrides };
+        delete themeOverrides[key];
+        return { ...prev, themeOverrides };
+      });
+    },
+    [commitDocChange]
+  );
+
+  const handleResetThemeColors = useCallback(() => {
+    commitDocChange((prev) => ({ ...prev, themeOverrides: {} }));
+  }, [commitDocChange]);
+
+  const handleChangeActiveLayerColors = useCallback(
+    (patch: Partial<Record<'floorColorOverride' | 'wallFillOverride' | 'inkStrokeOverride', string | null>>) => {
+      commitDocChange((prev) => ({
+        ...prev,
+        layers: prev.layers.map((layer) => {
+          if (layer.id !== prev.activeLayerId) return layer;
+          const next = { ...layer };
+          for (const key of ['floorColorOverride', 'wallFillOverride', 'inkStrokeOverride'] as const) {
+            if (!(key in patch)) continue;
+            const value = patch[key];
+            if (value) next[key] = value;
+            else delete next[key];
+          }
+          return next;
+        }),
+      }));
     },
     [commitDocChange]
   );
@@ -849,10 +970,24 @@ export function App() {
     [doc, fitViewToDocument, showToast, t]
   );
 
+  const exportView = useMemo<ExportView>(
+    () => ({
+      mode: viewMode,
+      quarter: isoQuarter,
+      wallHeightPx: wallHeightCells * (doc.gridSize || 64),
+    }),
+    [doc.gridSize, isoQuarter, viewMode, wallHeightCells]
+  );
+
+  const activeViewport = useCallback(
+    () => (viewMode === '3d' ? isoViewportRef.current : viewportRef.current),
+    [viewMode]
+  );
+
   // Export handlers
   const handleExportSvg = async () => {
     try {
-      await downloadSvgFile(doc, viewportRef.current);
+      await downloadSvgFile(doc, activeViewport(), exportView);
       showToast(t('toast.svgExported'));
     } catch {
       showToast(t('toast.svgFailed'));
@@ -861,7 +996,7 @@ export function App() {
 
   const handleExportPng = async () => {
     try {
-      await downloadPngFile(doc, viewportRef.current);
+      await downloadPngFile(doc, activeViewport(), exportView);
       showToast(t('toast.pngExported'));
     } catch {
       showToast(t('toast.pngFailed'));
@@ -889,10 +1024,19 @@ export function App() {
         onToggleSnap={() => setSnapEnabled((s) => !s)}
         showGrid={doc.showGrid}
         onToggleGrid={() => setDoc((prev) => ({ ...prev, showGrid: !prev.showGrid }))}
+        viewMode={viewMode}
+        onSetViewMode={setViewModeTo}
+        onRotateIso={rotateIso}
+        wallHeightCells={wallHeightCells}
+        onWallHeightChange={setWallHeightCells}
         onLoadPreset={handleLoadPreset}
         onOpenRandomGenerator={() => setRandomModalOpen(true)}
         themeId={doc.themeId}
+        themeOverrides={doc.themeOverrides}
         onChangeTheme={handleChangeTheme}
+        onChangeThemeColor={handleChangeThemeColor}
+        onResetThemeColor={handleResetThemeColor}
+        onResetThemeColors={handleResetThemeColors}
         onExportSvg={handleExportSvg}
         onExportPng={handleExportPng}
         onExportJson={handleExportJson}
@@ -903,6 +1047,7 @@ export function App() {
       <div className="flex-1 flex min-h-0 relative">
         <LeftToolbar
           activeTool={activeTool}
+          editingLocked={viewMode === '3d'}
           environment={layerEnvironment(
             doc.layers.find((layer) => layer.id === doc.activeLayerId) ?? doc.layers[0]
           )}
@@ -958,6 +1103,12 @@ export function App() {
             pan={pan}
             onPanChange={setPan}
             viewportRef={viewportRef}
+            isoViewportRef={isoViewportRef}
+            viewMode={viewMode}
+            isoQuarter={isoQuarter}
+            wallHeightCells={wallHeightCells}
+            onExitIso={() => setViewModeTo('flat')}
+            onCanvasSize={rememberCanvasSize}
           />
 
           {/* Floating Toast Notification */}
@@ -1012,6 +1163,7 @@ export function App() {
           pendingRotation={pendingRotation}
           onChangePendingRotation={setPendingRotation}
           onChangeActiveLayerWallStyle={handleChangeActiveLayerWallStyle}
+          onChangeActiveLayerColors={handleChangeActiveLayerColors}
           onChangeActiveLayerBuildingStyle={handleChangeActiveLayerBuildingStyle}
           onToggleActiveLayerHatch={handleToggleActiveLayerHatch}
           onSelectActiveLayer={(layerId) =>
@@ -1046,7 +1198,8 @@ export function App() {
         isOpen={svgInspectorOpen}
         onClose={() => setSvgInspectorOpen(false)}
         doc={doc}
-        viewportEl={viewportRef.current}
+        viewportEl={viewMode === '3d' ? isoViewportRef.current : viewportRef.current}
+        exportView={exportView}
         onDownloadSvg={handleExportSvg}
       />
     </div>

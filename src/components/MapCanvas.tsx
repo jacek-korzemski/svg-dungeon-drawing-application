@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readImageFile, resolveAssetUrl } from '../data/assetLibrary';
-import { MAP_THEMES } from '../data/presets';
+import { resolveTheme } from '../data/presets';
 import {
   DoorItem,
   DoorType,
@@ -53,6 +53,16 @@ import { useI18n } from '../i18n';
 import { ExteriorLayerGraphics } from './ExteriorArt';
 import { SvgDoorArtwork, SvgPropArtwork, SvgStairArtwork } from './SvgPropArtwork';
 import { draftTexturePaint, FloorTextureResources, FloorTextureStack } from './FloorTextureLayer';
+import { IsoScene } from './IsoScene';
+import {
+  isoPlaneInverseMatrix,
+  isoPlaneMatrix,
+  type IsoQuarter,
+  type IsoViewMode,
+  projectIso,
+  propArtworkTransform,
+  unprojectIsoGround,
+} from '../utils/isoProjection';
 
 interface MapCanvasProps {
   doc: DungeonDocument;
@@ -105,6 +115,12 @@ interface MapCanvasProps {
   onPanChange: (newPan: { x: number; y: number }) => void;
   // Ref for SVG export
   viewportRef: React.RefObject<SVGGElement | null>;
+  isoViewportRef: React.RefObject<SVGGElement | null>;
+  viewMode: IsoViewMode;
+  isoQuarter: IsoQuarter;
+  wallHeightCells: number;
+  onExitIso: () => void;
+  onCanvasSize: (width: number, height: number) => void;
   onCursorWorldMove?: (pt: Point2D) => void;
 }
 
@@ -151,11 +167,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   pan,
   onPanChange,
   viewportRef,
+  isoViewportRef,
+  viewMode,
+  isoQuarter,
+  wallHeightCells,
+  onExitIso,
+  onCanvasSize,
   onCursorWorldMove,
 }) => {
   const { t } = useI18n();
   const svgRootRef = useRef<SVGSVGElement | null>(null);
-  const theme = MAP_THEMES[doc.themeId];
+  const theme = resolveTheme(doc.themeId, doc.themeOverrides);
   const G = doc.gridSize || GRID_SIZE;
   const ink = G / 32;
   const activeLayer = doc.layers.find((layer) => layer.id === doc.activeLayerId) ?? doc.layers[0];
@@ -209,14 +231,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     (clientX: number, clientY: number, applySnap = snapEnabled): Point2D => {
       const rect = svgRootRef.current?.getBoundingClientRect();
       if (!rect) return [0, 0];
-      const wx = (clientX - rect.left - pan.x) / zoom;
-      const wy = (clientY - rect.top - pan.y) / zoom;
+      let wx = (clientX - rect.left - pan.x) / zoom;
+      let wy = (clientY - rect.top - pan.y) / zoom;
+      if (viewMode === 'iso' || viewMode === '3d') {
+        [wx, wy] = unprojectIsoGround(wx, wy, isoQuarter);
+      }
       if (applySnap) {
         return [snapToGrid(wx, G, 1), snapToGrid(wy, G, 1)];
       }
       return [Math.round(wx), Math.round(wy)];
     },
-    [pan.x, pan.y, zoom, snapEnabled, G]
+    [pan.x, pan.y, zoom, snapEnabled, G, viewMode, isoQuarter]
   );
 
   // Keyboard shortcuts for Space panning & Tab elbow flipping & Escape cancel
@@ -239,7 +264,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         setPolygonPts([]);
         setCaveStrokePts([]);
         onSelectEntity(null);
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEntity) {
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEntity && viewMode !== '3d') {
         e.preventDefault();
         onDeleteEntity(selectedEntity);
       }
@@ -256,7 +281,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [activeTool, selectedEntity, onDeleteEntity, onSelectEntity]);
+  }, [activeTool, selectedEntity, onDeleteEntity, onSelectEntity, viewMode]);
+
+  useEffect(() => {
+    const element = svgRootRef.current;
+    if (!element) return;
+    const publish = () => {
+      const rect = element.getBoundingClientRect();
+      onCanvasSize(rect.width, rect.height);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onCanvasSize]);
 
   // Clear incomplete polygon if switching tools
   useEffect(() => {
@@ -342,6 +380,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   };
 
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (viewMode === '3d') {
+      if (e.button === 2) return;
+      e.preventDefault();
+      setIsPanning(true);
+      panStartRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        panX: pan.x,
+        panY: pan.y,
+      };
+      return;
+    }
+
     // Middle click, Space+click, or Pan tool
     if (e.button === 1 || spacePressed || activeTool === 'pan') {
       e.preventDefault();
@@ -477,6 +528,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         label: activePropPreset.label,
         widthPx: activePropPreset.widthPx,
         heightPx: activePropPreset.heightPx,
+        ...(viewMode === 'iso'
+          ? { artwork: 'upright' as const, artworkQuarter: isoQuarter }
+          : { artwork: 'plane' as const }),
       });
       return;
     }
@@ -507,11 +561,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       return;
     }
 
-    const snappedPt = screenToWorld(e.clientX, e.clientY, snapEnabled);
     const rawPt = screenToWorld(e.clientX, e.clientY, false);
+    const snappedPt = screenToWorld(e.clientX, e.clientY, snapEnabled);
     setCursorWorld(snappedPt);
     setRawCursorWorld(rawPt);
     onCursorWorldMove?.(snappedPt);
+    if (viewMode === '3d') return;
 
     if (texturePaintingRef.current && activeTool === 'texture' && textureMode === 'brush') {
       const radius = (textureBrushCells * G) / 2;
@@ -538,10 +593,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Handle rotating selected entity
     if (rotatingEntity) {
-      const angleRad = Math.atan2(
-        rawPt[1] - rotatingEntity.centerY,
-        rawPt[0] - rotatingEntity.centerX
-      );
+      let dx = rawPt[0] - rotatingEntity.centerX;
+      let dy = rawPt[1] - rotatingEntity.centerY;
+      const spinningEntity = rotatingEntity.entity;
+      if (spinningEntity.kind === 'prop') {
+        const spinning = doc.props.find((item) => item.id === spinningEntity.id);
+        if (spinning?.artwork === 'upright') {
+          [dx, dy] = projectIso(dx, dy, 0, spinning.artworkQuarter ?? 0);
+        }
+      }
+      const angleRad = Math.atan2(dy, dx);
       if (rotatingEntity.originPolygon && rotatingEntity.startPointerAngle !== undefined) {
         let delta = angleRad - rotatingEntity.startPointerAngle;
         if (!e.shiftKey) {
@@ -612,6 +673,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       panStartRef.current = null;
       return;
     }
+    if (viewMode === '3d') return;
 
     if (rotatingEntity) {
       onUpdateEntity(rotatingEntity.entity, {}, true);
@@ -715,6 +777,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   // Handle Double Click to finish polygon room
   const handleDoubleClick = () => {
+    if (viewMode === '3d') return;
     const drawing =
       activeTool === 'polygon' ||
       (activeTool === 'eraser' && eraserShape === 'polygon') ||
@@ -727,6 +790,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Drag & Drop external PNG/Image files straight onto the dungeon map!
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+    if (viewMode === '3d') return;
     const file = e.dataTransfer.files?.[0];
     if (!file || !file.type.startsWith('image/')) return;
     const dropPt = screenToWorld(e.clientX, e.clientY, snapEnabled);
@@ -742,6 +806,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           label: file.name.replace(/\.[^.]+$/, ''),
           widthPx: width,
           heightPx: height,
+          ...(viewMode === 'iso'
+            ? { artwork: 'upright' as const, artworkQuarter: isoQuarter }
+            : { artwork: 'plane' as const }),
         });
       })
       .catch(() => undefined);
@@ -792,6 +859,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         y: p.y,
         rotation: p.rotation,
         radius: (Math.max(p.widthPx, p.heightPx) * p.scale) / 2 + 10 * ink,
+        artwork: p.artwork,
+        artworkQuarter: p.artworkQuarter,
       };
     }
     if (selectedEntity.kind === 'label') {
@@ -814,7 +883,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   }, [selectedEntity, doc, G, ink]);
 
   const cursorClass =
-    isPanning || spacePressed || activeTool === 'pan'
+    viewMode === '3d' || isPanning || spacePressed || activeTool === 'pan'
       ? 'cursor-grab active:cursor-grabbing'
       : activeTool === 'select'
         ? 'cursor-default'
@@ -890,10 +959,30 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           <filter id="ds-prop-shadow" x="-25%" y="-25%" width="150%" height="150%">
             <feDropShadow dx={1.5 * ink} dy={2 * ink} stdDeviation={1.5 * ink} floodColor="#000000" floodOpacity="0.28" />
           </filter>
+          <filter id="ds-building-shadow" x="-30%" y="-30%" width="170%" height="170%">
+            <feDropShadow
+              dx={3 * ink}
+              dy={4 * ink}
+              stdDeviation={2.4 * ink}
+              floodColor="#000000"
+              floodOpacity="0.32"
+            />
+          </filter>
+          <FloorTextureResources blurPx={textureBlurLevels} />
         </defs>
 
         {/* Camera Transform Group */}
         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+          {viewMode === '3d' ? (
+            <g ref={isoViewportRef} id="dungeon-iso-svg-root">
+              <IsoScene
+                doc={doc}
+                quarter={isoQuarter}
+                wallHeightCells={wallHeightCells}
+              />
+            </g>
+          ) : (
+          <>
           {/* Infinite Drafting Grid Backdrop (ignored in cropped SVG export which uses its own bounded grid) */}
           <g data-export-ignore="true">
             <rect
@@ -904,7 +993,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               height={worldExtent * 2}
               fill={theme.bgVoid}
             />
-            {doc.showGrid && (
+            {doc.showGrid && viewMode !== 'iso' && (
               <rect
                 data-canvas-bg="true"
                 x={-worldExtent}
@@ -916,6 +1005,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             )}
           </g>
 
+          <g transform={viewMode === 'iso' ? isoPlaneMatrix(isoQuarter, 0) : undefined}>
+          {doc.showGrid && viewMode === 'iso' && (
+            <rect
+              data-export-ignore="true"
+              data-canvas-bg="true"
+              x={-worldExtent}
+              y={-worldExtent}
+              width={worldExtent * 2}
+              height={worldExtent * 2}
+              fill="url(#ds-void-grid)"
+            />
+          )}
           {activeTool === 'select' && (
             <g data-export-ignore="true">
               {[...doc.layers].reverse().map((layer) => {
@@ -958,18 +1059,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
           {/* EXPORTABLE MODULAR MULTI-SVG VIEWPORT */}
           <g ref={viewportRef} id="dungeon-modular-svg-root">
-            <defs>
-              <filter id="ds-building-shadow" x="-30%" y="-30%" width="170%" height="170%">
-                <feDropShadow
-                  dx={3 * ink}
-                  dy={4 * ink}
-                  stdDeviation={2.4 * ink}
-                  floodColor="#000000"
-                  floodOpacity="0.32"
-                />
-              </filter>
-            </defs>
-            <FloorTextureResources blurPx={textureBlurLevels} />
             {/* ==============================================================
                 MODULE 1: DUNGEON LAYERS (Each layer is an independent <svg>)
                ============================================================== */}
@@ -1009,6 +1098,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               }
               if (!wallData) return null;
               const floorColor = layer.floorColorOverride || theme.floorFill;
+              const wallFill = layer.wallFillOverride || theme.wallFill;
+              const inkColor = layer.inkStrokeOverride || theme.inkStroke;
               const maskId = `mask-outside-${layer.id}`;
               const clipId = `clip-floor-${layer.id}`;
 
@@ -1090,7 +1181,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                           <path
                             d={wallData.mainWallPath}
                             fill="none"
-                            stroke={theme.inkStroke}
+                            stroke={inkColor}
                             strokeWidth={6 * ink}
                             strokeOpacity={0.14}
                             strokeLinejoin="miter"
@@ -1098,7 +1189,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                           <path
                             d={wallData.mainWallPath}
                             fill="none"
-                            stroke={theme.inkStroke}
+                            stroke={inkColor}
                             strokeWidth={3.2 * ink}
                             strokeLinejoin="miter"
                             strokeLinecap="square"
@@ -1112,7 +1203,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                           <path
                             d={wallData.mainWallPath}
                             fill="none"
-                            stroke={theme.inkStroke}
+                            stroke={inkColor}
                             strokeWidth={3.4 * ink}
                             strokeLinejoin="round"
                             strokeLinecap="round"
@@ -1122,7 +1213,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                             <path
                               d={wallData.secondaryDetailPath}
                               fill="none"
-                              stroke={theme.inkStroke}
+                              stroke={inkColor}
                               strokeWidth={1.3 * ink}
                               strokeOpacity={0.75}
                               strokeLinecap="round"
@@ -1135,7 +1226,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                               cx={dot.x}
                               cy={dot.y}
                               r={dot.r}
-                              fill={theme.inkStroke}
+                              fill={inkColor}
                               opacity={0.65}
                             />
                           ))}
@@ -1148,7 +1239,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                           <path
                             d={wallData.mainWallPath}
                             fill="none"
-                            stroke={theme.inkStroke}
+                            stroke={inkColor}
                             strokeWidth={7.5 * ink}
                             strokeLinejoin="miter"
                           />
@@ -1156,7 +1247,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                           <path
                             d={wallData.mainWallPath}
                             fill="none"
-                            stroke={theme.wallFill}
+                            stroke={wallFill}
                             strokeWidth={4.5 * ink}
                             strokeLinejoin="miter"
                           />
@@ -1165,7 +1256,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                             <path
                               d={wallData.brickTicksPath}
                               fill="none"
-                              stroke={theme.inkStroke}
+                              stroke={inkColor}
                               strokeWidth={1.4 * ink}
                             />
                           )}
@@ -1177,14 +1268,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                           <path
                             d={wallData.mainWallPath}
                             fill="none"
-                            stroke={theme.inkStroke}
+                            stroke={inkColor}
                             strokeWidth={8.5 * ink}
                             strokeLinejoin="miter"
                           />
                           <path
                             d={wallData.mainWallPath}
                             fill="none"
-                            stroke={theme.wallFill}
+                            stroke={wallFill}
                             strokeWidth={3.6 * ink}
                             strokeLinejoin="miter"
                           />
@@ -1196,7 +1287,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                           <path
                             d={wallData.mainWallPath}
                             fill="none"
-                            stroke={theme.inkStroke}
+                            stroke={inkColor}
                             strokeWidth={3.2 * ink}
                             strokeLinecap="square"
                           />
@@ -1204,8 +1295,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                             <path
                               key={idx}
                               d={rp}
-                              fill={theme.wallFill}
-                              stroke={theme.inkStroke}
+                              fill={wallFill}
+                              stroke={inkColor}
                               strokeWidth={1.2 * ink}
                             />
                           ))}
@@ -1236,7 +1327,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                         <path
                           d={d}
                           fill="none"
-                          stroke={isSelected ? '#3B82F6' : theme.inkStroke}
+                          stroke={isSelected ? '#3B82F6' : inkColor}
                           strokeWidth={(sw.wallStyle === 'double' || sw.wallStyle === 'brick' ? 6.5 : 3.5) * ink}
                           strokeDasharray={
                             sw.wallStyle === 'ruins'
@@ -1249,7 +1340,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                           <path
                             d={d}
                             fill="none"
-                            stroke={theme.wallFill}
+                            stroke={wallFill}
                             strokeWidth={3 * ink}
                             strokeDasharray={
                               sw.wallStyle === 'brick' ? `${10 * ink} ${2 * ink}` : undefined
@@ -1337,7 +1428,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                     className={activeTool === 'select' ? 'cursor-move' : undefined}
                   >
                     <g
-                      transform={`rotate(${prop.rotation}) scale(${prop.flipX ? -1 : 1}, 1)`}
+                      transform={propArtworkTransform(prop.artwork, prop.artworkQuarter, prop.rotation, prop.flipX)}
                       filter="url(#ds-prop-shadow)"
                     >
                       {prop.kind === 'svg' && prop.svgPropId ? (
@@ -1674,7 +1765,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             {/* Prop Ghost Preview */}
             {activeTool === 'prop' && (
               <g
-                transform={`translate(${cursorWorld[0]}, ${cursorWorld[1]}) rotate(${pendingRotation})`}
+                transform={`translate(${cursorWorld[0]}, ${cursorWorld[1]}) ${propArtworkTransform(
+                  viewMode === 'iso' ? 'upright' : 'plane',
+                  isoQuarter,
+                  pendingRotation
+                )}`}
                 opacity={0.72}
               >
                 {activePropPreset.kind === 'svg' && activePropPreset.svgPropId ? (
@@ -1722,7 +1817,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           {selectionInfo && activeTool === 'select' && (
             <g
               data-export-ignore="true"
-              transform={`translate(${selectionInfo.x}, ${selectionInfo.y})`}
+              transform={`translate(${selectionInfo.x}, ${selectionInfo.y})${
+                'artwork' in selectionInfo && selectionInfo.artwork === 'upright'
+                  ? ` ${isoPlaneInverseMatrix(selectionInfo.artworkQuarter ?? 0)}`
+                  : ''
+              }`}
             >
               <circle
                 cx={0}
@@ -1775,6 +1874,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               </g>
             </g>
           )}
+          </g>
+          </>
+          )}
         </g>
       </svg>
 
@@ -1787,6 +1889,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         <span>
           {t('canvas.scale')} <strong className="text-[#F1F3F5]">{doc.feetPerCell} ft</strong>
         </span>
+        {viewMode === '3d' ? (
+          <>
+            <span className="text-[#2D333D]">|</span>
+            <span className="text-indigo-300">{t('canvas.isoPreview')}</span>
+            <button
+              type="button"
+              onClick={onExitIso}
+              className="rounded bg-indigo-600 px-2 py-0.5 font-medium text-white hover:bg-indigo-500"
+            >
+              {t('canvas.isoBack')}
+            </button>
+          </>
+        ) : (
+          <>
         {activeTool === 'corridor' && (
           <>
             <span className="text-[#2D333D]">|</span>
@@ -1828,6 +1944,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           <>
             <span className="text-[#2D333D]">|</span>
             <span className="text-indigo-300">{t('canvas.propHint')}</span>
+          </>
+        )}
           </>
         )}
       </div>

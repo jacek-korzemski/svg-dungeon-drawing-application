@@ -23,6 +23,7 @@ interface LeftToolbarProps {
   activeTool: ToolType;
   environment: LayerEnvironment;
   eraserShape: EraserShape;
+  editingLocked: boolean;
   onSelectTool: (tool: ToolType) => void;
   onChangeEraserShape: (shape: EraserShape) => void;
 }
@@ -61,10 +62,11 @@ export const LeftToolbar: React.FC<LeftToolbarProps> = ({
   activeTool,
   environment,
   eraserShape,
+  editingLocked,
   onSelectTool,
   onChangeEraserShape,
 }) => {
-  const { messages } = useI18n();
+  const { messages, t } = useI18n();
   const [eraserOpen, setEraserOpen] = useState(false);
   const tools = TOOLS.filter((tool) => environment === 'exterior' || tool.id !== 'district').map((tool) => {
     const exteriorCopy =
@@ -75,7 +77,7 @@ export const LeftToolbar: React.FC<LeftToolbarProps> = ({
   });
 
   return (
-    <aside className="w-13 bg-[#141619] border-r border-[#2D333D] flex flex-col items-center py-2.5 gap-1 z-20 shrink-0 select-none overflow-visible">
+    <aside className={`w-13 bg-[#141619] border-r border-[#2D333D] flex flex-col items-center py-2.5 gap-1 z-20 shrink-0 select-none overflow-visible ${editingLocked ? 'opacity-45' : ''}`}>
       {tools.map((tool, idx) => {
         const Icon = tool.icon;
         const isActive = activeTool === tool.id;
@@ -88,15 +90,17 @@ export const LeftToolbar: React.FC<LeftToolbarProps> = ({
             {showDivider && <div className="w-7 h-px bg-[#2D333D] my-1" />}
             <div
               className="relative"
-              onMouseEnter={() => eraserMenu && setEraserOpen(true)}
+              onMouseEnter={() => eraserMenu && !editingLocked && setEraserOpen(true)}
               onMouseLeave={() => eraserMenu && setEraserOpen(false)}
             >
               <button
+                disabled={editingLocked}
                 onClick={() => {
+                  if (editingLocked) return;
                   onSelectTool(tool.id);
                   if (eraserMenu) setEraserOpen(true);
                 }}
-                title={`${tool.label} (${tool.shortcut}) — ${tool.description}`}
+                title={editingLocked ? t('topBar.editingLocked') : `${tool.label} (${tool.shortcut}) — ${tool.description}`}
                 className={`group relative w-9.5 h-9.5 rounded-lg flex items-center justify-center transition-all ${
                   isActive
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950/60'

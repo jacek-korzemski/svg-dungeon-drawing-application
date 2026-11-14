@@ -1,4 +1,4 @@
-import { MAP_THEMES } from '../data/presets';
+import { resolveTheme } from '../data/presets';
 import { DungeonDocument } from '../types/dungeon';
 import {
   buildStylizedWallData,
@@ -6,6 +6,23 @@ import {
   inkScale,
   multiPolygonToSvgPath,
 } from './geometry';
+import { IsoQuarter, IsoViewMode, isoPlaneMatrix, projectBounds, propVisualCorners } from './isoProjection';
+
+export interface ExportView {
+  mode: IsoViewMode;
+  quarter: IsoQuarter;
+  wallHeightPx: number;
+}
+
+const FLAT_VIEW: ExportView = { mode: 'flat', quarter: 0, wallHeightPx: 0 };
+
+function exportBounds(doc: DungeonDocument, view: ExportView) {
+  const flat = computeDocumentBounds(doc);
+  if (view.mode === 'flat') return flat;
+  const grid = doc.gridSize || GRID_SIZE;
+  const zTop = view.mode === '3d' ? Math.max(view.wallHeightPx * 1.7, grid) : 0;
+  return projectBounds(flat, view.quarter, zTop, grid);
+}
 
 export function computeDocumentBounds(doc: DungeonDocument) {
   const G = doc.gridSize || GRID_SIZE;
@@ -64,10 +81,7 @@ export function computeDocumentBounds(doc: DungeonDocument) {
     expand(s.x + halfW, s.y + halfL);
   }
   for (const p of doc.props) {
-    const w = (p.widthPx * p.scale) / 2;
-    const h = (p.heightPx * p.scale) / 2;
-    expand(p.x - w, p.y - h);
-    expand(p.x + w, p.y + h);
+    for (const [x, y] of propVisualCorners(p)) expand(x, y);
   }
   for (const l of doc.labels) {
     expand(l.x - G, l.y - G);
@@ -103,7 +117,7 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-async function inlineExternalImages(root: SVGGElement) {
+async function inlineExternalImages(root: Element) {
   const images = [...root.querySelectorAll('image')];
   await Promise.all(
     images.map(async (img) => {
@@ -124,22 +138,32 @@ async function inlineExternalImages(root: SVGGElement) {
 
 export async function buildCleanExportSvg(
   doc: DungeonDocument,
-  viewportGroupEl: SVGGElement | null
+  viewportGroupEl: SVGGElement | null,
+  view: ExportView = FLAT_VIEW
 ): Promise<string> {
-  const theme = MAP_THEMES[doc.themeId];
-  const bounds = computeDocumentBounds(doc);
+  const theme = resolveTheme(doc.themeId, doc.themeOverrides);
+  const bounds = exportBounds(doc, view);
   const G = doc.gridSize || GRID_SIZE;
   const ink = inkScale(G);
 
-  // Clone inner SVG content if available from live DOM so every single vector prop, door, stair & PNG is identical!
+  // Clone the live view so doors, props and the active projection stay identical.
   let innerLayersMarkup = '';
+  let sharedDefs = '';
   if (viewportGroupEl) {
     const clone = viewportGroupEl.cloneNode(true) as SVGGElement;
-    // Strip interactive selection/drafting overlays before exporting
-    clone
-      .querySelectorAll('[data-export-ignore="true"]')
-      .forEach((node) => node.remove());
-    await inlineExternalImages(clone);
+    clone.querySelectorAll('[data-export-ignore="true"]').forEach((node) => node.remove());
+    const holder = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    const owner = viewportGroupEl.ownerSVGElement;
+    if (owner) {
+      defs.innerHTML = [...owner.children]
+        .filter((node) => node.tagName.toLowerCase() === 'defs')
+        .map((node) => node.innerHTML)
+        .join('\n');
+    }
+    holder.append(defs, clone);
+    await inlineExternalImages(holder);
+    sharedDefs = defs.innerHTML;
     innerLayersMarkup = clone.innerHTML;
   } else {
     // Fallback programmatic generation
@@ -148,13 +172,19 @@ export async function buildCleanExportSvg(
       .map((layer) => {
         const floorPath = multiPolygonToSvgPath(layer.geometry);
         const wallData = buildStylizedWallData(layer.geometry, layer.wallStyle);
+        const floor = layer.floorColorOverride || theme.floorFill;
+        const ink = layer.inkStrokeOverride || theme.inkStroke;
         return `
   <svg id="layer-${layer.id}" overflow="visible">
-    <path d="${floorPath}" fill="${theme.floorFill}" />
-    <path d="${wallData.mainWallPath}" fill="none" stroke="${theme.inkStroke}" stroke-width="3" />
+    <path d="${floorPath}" fill="${floor}" />
+    <path d="${wallData.mainWallPath}" fill="none" stroke="${ink}" stroke-width="3" />
   </svg>`;
       })
       .join('\n');
+  }
+
+  if (view.mode === 'iso') {
+    innerLayersMarkup = `<g transform="${isoPlaneMatrix(view.quarter, 0)}">${innerLayersMarkup}</g>`;
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -178,6 +208,7 @@ export async function buildCleanExportSvg(
     <pattern id="export-void-grid" width="${G}" height="${G}" patternUnits="userSpaceOnUse">
       <path d="M ${G} 0 L 0 0 0 ${G}" fill="none" stroke="${theme.gridMajor}" stroke-width="1" />
     </pattern>
+    ${sharedDefs}
   </defs>
 
   <!-- Layer 0: Parchment / Blueprint Backdrop & Grid -->
@@ -223,9 +254,10 @@ export function triggerFileDownload(blob: Blob, filename: string) {
 
 export async function downloadSvgFile(
   doc: DungeonDocument,
-  viewportGroupEl: SVGGElement | null
+  viewportGroupEl: SVGGElement | null,
+  view: ExportView = FLAT_VIEW
 ) {
-  const svgStr = await buildCleanExportSvg(doc, viewportGroupEl);
+  const svgStr = await buildCleanExportSvg(doc, viewportGroupEl, view);
   const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
   const slug = doc.title.toLowerCase().replace(/[^a-z0-9ąęćłńóśźż]+/gi, '-') || 'dungeon';
   triggerFileDownload(blob, `${slug}.svg`);
@@ -233,10 +265,11 @@ export async function downloadSvgFile(
 
 export async function downloadPngFile(
   doc: DungeonDocument,
-  viewportGroupEl: SVGGElement | null
+  viewportGroupEl: SVGGElement | null,
+  view: ExportView = FLAT_VIEW
 ): Promise<void> {
-  const svgStr = await buildCleanExportSvg(doc, viewportGroupEl);
-  const bounds = computeDocumentBounds(doc);
+  const svgStr = await buildCleanExportSvg(doc, viewportGroupEl, view);
+  const bounds = exportBounds(doc, view);
   const scale = 1; // 1 world px = 1 PNG px, so one cell is 64 px
 
   return new Promise((resolve, reject) => {

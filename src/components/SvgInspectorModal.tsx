@@ -2,13 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Check, Code2, Copy, Download, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { DungeonDocument } from '../types/dungeon';
-import { buildCleanExportSvg } from '../utils/exportDungeon';
+import { buildCleanExportSvg, type ExportView } from '../utils/exportDungeon';
 
 interface SvgInspectorModalProps {
   isOpen: boolean;
   onClose: () => void;
   doc: DungeonDocument;
   viewportEl: SVGGElement | null;
+  exportView: ExportView;
   onDownloadSvg: () => void;
 }
 
@@ -17,6 +18,7 @@ export const SvgInspectorModal: React.FC<SvgInspectorModalProps> = ({
   onClose,
   doc,
   viewportEl,
+  exportView,
   onDownloadSvg,
 }) => {
   const { t } = useI18n();
@@ -26,13 +28,13 @@ export const SvgInspectorModal: React.FC<SvgInspectorModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
-    buildCleanExportSvg(doc, viewportEl).then((code) => {
+    buildCleanExportSvg(doc, viewportEl, exportView).then((code) => {
       if (!cancelled) setSvgCode(code);
     });
     return () => {
       cancelled = true;
     };
-  }, [isOpen, doc, viewportEl]);
+  }, [isOpen, doc, viewportEl, exportView]);
 
   if (!isOpen) return null;
 

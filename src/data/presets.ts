@@ -77,6 +77,18 @@ export const MAP_THEMES: Record<MapThemeId, MapTheme> = {
   },
 };
 
+export type ThemeColorKey = Exclude<keyof MapTheme, 'id'>;
+
+export function resolveTheme(themeId: MapThemeId, overrides?: Partial<Omit<MapTheme, 'id'>> | null): MapTheme {
+  const theme: MapTheme = { ...MAP_THEMES[themeId] };
+  if (!overrides) return theme;
+  for (const key of Object.keys(overrides) as ThemeColorKey[]) {
+    const value = overrides[key];
+    if (typeof value === 'string' && value.startsWith('#')) theme[key] = value;
+  }
+  return theme;
+}
+
 export interface BuildingStyleOption {
   id: BuildingStyle;
   /** Tile from src/assets-textures used to fill the footprint. */

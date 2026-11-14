@@ -35,3 +35,6 @@ Desktop.ini
 *.njsproj
 *.sln
 *.sw?
+
+# Generated dungeon previews
+gallery/

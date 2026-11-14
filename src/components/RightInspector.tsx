@@ -24,6 +24,7 @@ import {
   BUILDING_STYLE_OPTIONS,
   DOOR_TYPE_OPTIONS,
   EXTERIOR_WALL_STYLE_OPTIONS,
+  resolveTheme,
   ROAD_STYLE_OPTIONS,
   STAIR_TYPE_OPTIONS,
   SVG_PROP_CATALOG,
@@ -129,6 +130,9 @@ interface RightInspectorProps {
   onChangePendingRotation: (deg: number) => void;
   // Document mutations
   onChangeActiveLayerWallStyle: (style: WallStyle) => void;
+  onChangeActiveLayerColors: (
+    patch: Partial<Record<'floorColorOverride' | 'wallFillOverride' | 'inkStrokeOverride', string | null>>
+  ) => void;
   onChangeActiveLayerBuildingStyle: (style: BuildingStyle) => void;
   onToggleActiveLayerHatch: () => void;
   onSelectActiveLayer: (layerId: string) => void;
@@ -197,6 +201,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
   pendingRotation,
   onChangePendingRotation,
   onChangeActiveLayerWallStyle,
+  onChangeActiveLayerColors,
   onChangeActiveLayerBuildingStyle,
   onToggleActiveLayerHatch,
   onSelectActiveLayer,
@@ -217,6 +222,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
   onDuplicateEntity,
 }) => {
   const { messages, t } = useI18n();
+  const theme = resolveTheme(doc.themeId, doc.themeOverrides);
   const [propTab, setPropTab] = useState<'svg' | 'png'>('svg');
   const [customPngs, setCustomPngs] = useState<BuiltinPngAsset[]>([]);
   const [layerMenuPos, setLayerMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -840,7 +846,12 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
                   }`}
                 >
                   <div className="shrink-0 rounded overflow-hidden border border-black/30">
-                    <WallStylePreviewSvg style={id} />
+                    <WallStylePreviewSvg
+                      style={id}
+                      floor={activeLayer?.floorColorOverride || theme.floorFill}
+                      wall={activeLayer?.wallFillOverride || theme.wallFill}
+                      ink={activeLayer?.inkStrokeOverride || theme.inkStroke}
+                    />
                   </div>
                   <div className="min-w-0">
                     <div className="text-xs font-semibold leading-tight">{copy.name}</div>
@@ -849,6 +860,59 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
                 </button>
               );
             })}
+          </div>
+        )}
+        {!exterior && activeLayer && (
+          <div className="space-y-1.5 border-t border-[#2D333D] pt-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
+                {t('inspector.layerColors')}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  onChangeActiveLayerColors({
+                    floorColorOverride: null,
+                    wallFillOverride: null,
+                    inkStrokeOverride: null,
+                  })
+                }
+                className="text-[10px] text-[#9CA3AF] hover:text-[#F1F3F5]"
+              >
+                {t('inspector.useTheme')}
+              </button>
+            </div>
+            {(
+              [
+                ['floorColorOverride', t('inspector.floorColor'), activeLayer.floorColorOverride, theme.floorFill],
+                [
+                  'wallFillOverride',
+                  activeLayer.wallStyle === 'brick' ? t('inspector.brickFill') : t('inspector.wallFill'),
+                  activeLayer.wallFillOverride,
+                  theme.wallFill,
+                ],
+                ['inkStrokeOverride', t('inspector.contour'), activeLayer.inkStrokeOverride, theme.inkStroke],
+              ] as const
+            ).map(([key, label, override, fallback]) => (
+              <label key={key} className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={/^#[0-9a-fA-F]{6}$/.test(override || fallback) ? override || fallback : '#000000'}
+                  onChange={(event) => onChangeActiveLayerColors({ [key]: event.target.value })}
+                  className="h-5 w-7 shrink-0 cursor-pointer border-0 bg-transparent p-0"
+                />
+                <span className="flex-1 text-[11px] text-[#D1D5DB]">{label}</span>
+                {override && (
+                  <button
+                    type="button"
+                    onClick={() => onChangeActiveLayerColors({ [key]: null })}
+                    className="text-[10px] text-[#9CA3AF] hover:text-[#F1F3F5]"
+                  >
+                    {t('inspector.useTheme')}
+                  </button>
+                )}
+              </label>
+            ))}
           </div>
         )}
       </div>

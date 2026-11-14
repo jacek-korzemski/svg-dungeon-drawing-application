@@ -559,33 +559,38 @@ export const SvgStairArtwork: React.FC<StairArtworkProps> = ({
   );
 };
 
-export const WallStylePreviewSvg: React.FC<{ style: WallStyle }> = ({ style }) => {
+export const WallStylePreviewSvg: React.FC<{ style: WallStyle; floor?: string; wall?: string; ink?: string }> = ({
+  style,
+  floor = '#F9F7F1',
+  wall = '#E5E0D5',
+  ink = '#141618',
+}) => {
   return (
     <svg viewBox="0 0 64 24" className="w-16 h-6 overflow-visible">
-      <rect x="2" y="2" width="60" height="20" fill="#F9F7F1" rx="2" />
+      <rect x="2" y="2" width="60" height="20" fill={floor} rx="2" />
       {style === 'straight' && (
-        <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke="#141618" strokeWidth="3" strokeLinejoin="miter" />
+        <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke={ink} strokeWidth="3" strokeLinejoin="miter" />
       )}
       {style === 'rock' && (
         <path
           d="M 8 18 L 6 13 L 9 9 L 8 6 L 16 4 L 24 7 L 33 4 L 42 7 L 50 5 L 56 6 L 58 12 L 55 18"
           fill="none"
-          stroke="#141618"
+          stroke={ink}
           strokeWidth="2.8"
           strokeLinejoin="round"
         />
       )}
       {style === 'brick' && (
         <g>
-          <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke="#141618" strokeWidth="5.5" />
-          <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke="#E5E0D5" strokeWidth="3.2" />
-          <path d="M 16 3.5 V 8.5 M 26 3.5 V 8.5 M 36 3.5 V 8.5 M 46 3.5 V 8.5" stroke="#141618" strokeWidth="1.2" />
+          <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke={ink} strokeWidth="5.5" />
+          <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke={wall} strokeWidth="3.2" />
+          <path d="M 16 3.5 V 8.5 M 26 3.5 V 8.5 M 36 3.5 V 8.5 M 46 3.5 V 8.5" stroke={ink} strokeWidth="1.2" />
         </g>
       )}
       {style === 'double' && (
         <g>
-          <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke="#141618" strokeWidth="6" />
-          <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke="#64748B" strokeWidth="2.5" />
+          <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke={ink} strokeWidth="6" />
+          <path d="M 8 18 L 8 6 L 56 6 L 56 18" fill="none" stroke={wall} strokeWidth="2.5" />
         </g>
       )}
       {style === 'ruins' && (
@@ -593,11 +598,11 @@ export const WallStylePreviewSvg: React.FC<{ style: WallStyle }> = ({ style }) =
           <path
             d="M 8 18 L 8 6 L 22 6 M 30 6 L 44 6 M 51 6 L 56 6 L 56 14"
             fill="none"
-            stroke="#141618"
+            stroke={ink}
             strokeWidth="2.8"
           />
-          <rect x="24" y="4" width="3" height="3" fill="#141618" />
-          <rect x="46" y="7" width="3.5" height="2.5" fill="#141618" />
+          <rect x="24" y="4" width="3" height="3" fill={ink} />
+          <rect x="46" y="7" width="3.5" height="2.5" fill={ink} />
         </g>
       )}
     </svg>

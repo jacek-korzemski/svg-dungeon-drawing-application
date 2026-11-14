@@ -1,3 +1,4 @@
+import type { ConcreteArchetype } from './dungeon/model';
 import {
   BuildingStyle,
   DoorType,
@@ -39,6 +40,7 @@ export interface RandomMapLabels {
   titlesDungeon: string[];
   titlesExterior: string[];
   titlesMixed: string[];
+  titlesByArchetype: Record<ConcreteArchetype, string[]>;
   dungeonLayers: Record<WallStyle, string[]>;
   exteriorLayers: {
     terrain: string[];
