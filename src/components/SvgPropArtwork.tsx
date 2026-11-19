@@ -286,7 +286,7 @@ export const SvgDoorArtwork: React.FC<DoorArtworkProps> = ({
           y={-thick / 2 + 1}
           width={widthPx - 6}
           height={thick - 2}
-          fill={floorColor}
+          fill="#8B5A2B"
           stroke={inkColor}
           strokeWidth={2}
         />
@@ -312,7 +312,7 @@ export const SvgDoorArtwork: React.FC<DoorArtworkProps> = ({
           y={-thick / 2 + 1}
           width={hw - 3}
           height={thick - 2}
-          fill={floorColor}
+          fill="#9CA3AF"
           stroke={inkColor}
           strokeWidth={2}
         />
@@ -321,7 +321,7 @@ export const SvgDoorArtwork: React.FC<DoorArtworkProps> = ({
           y={-thick / 2 + 1}
           width={hw - 3}
           height={thick - 2}
-          fill={floorColor}
+          fill="#9CA3AF"
           stroke={inkColor}
           strokeWidth={2}
         />

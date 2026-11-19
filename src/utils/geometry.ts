@@ -27,9 +27,17 @@ export function hash2D(x: number, y: number, seed = 1337): number {
   return n - Math.floor(n);
 }
 
+export type SnapDivisor = 0 | 1 | 2 | 3 | 4;
+
+export function isSnapDivisor(value: number): value is SnapDivisor {
+  return value === 0 || value === 1 || value === 2 || value === 3 || value === 4;
+}
+
+/** Snap to `gridSize / subDiv`. A divisor of 0 leaves the value alone. Thirds round to 0.001 px. */
 export function snapToGrid(val: number, gridSize = GRID_SIZE, subDiv = 1): number {
-  const step = gridSize / subDiv;
-  return Math.round(val / step) * step;
+  if (!Number.isFinite(val) || !Number.isFinite(gridSize) || gridSize === 0 || subDiv <= 0) return val;
+  const snapped = (Math.round((val * subDiv) / gridSize) * gridSize) / subDiv;
+  return Math.round(snapped * 1000) / 1000;
 }
 
 export function rectToPolygon(x1: number, y1: number, x2: number, y2: number): Polygon2D {
@@ -425,7 +433,9 @@ export function findNearestWallSnap(
   x: number,
   y: number,
   layers: DungeonLayer[],
-  maxDist = GRID_SIZE * 0.9
+  maxDist = GRID_SIZE * 0.9,
+  alongGrid = GRID_SIZE,
+  alongDivisor = 2
 ): { x: number; y: number; rotation: number; snapped: boolean } {
   let bestDist = maxDist;
   let bestPoint: Point2D = [x, y];
@@ -444,11 +454,11 @@ export function findNearestWallSnap(
     const dist = Math.hypot(x - px, y - py);
     if (dist < bestDist) {
       bestDist = dist;
-      // Snap position along the wall to half-grid increments so doors sit centered on tiles!
+      // Slide the door along the wall onto the same snap lattice as the rest of the map.
       const len = Math.sqrt(lenSq);
       const rawDistAlong = t * len;
-      const halfGrid = GRID_SIZE / 2;
-      const snappedDistAlong = Math.round(rawDistAlong / halfGrid) * halfGrid;
+      const snappedDistAlong =
+        alongDivisor > 0 ? snapToGrid(rawDistAlong, alongGrid, alongDivisor) : rawDistAlong;
       const clampedDist = Math.max(0, Math.min(len, snappedDistAlong));
       const ux = dx / len;
       const uy = dy / len;

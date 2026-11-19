@@ -155,6 +155,8 @@ interface RightInspectorProps {
   ) => void;
   onDeleteEntity: (entity: NonNullable<SelectedEntity>) => void;
   onDuplicateEntity: (entity: NonNullable<SelectedEntity>) => void;
+  rememberAssetScale: boolean;
+  onRememberAssetScaleChange: (remember: boolean) => void;
 }
 
 export const RightInspector: React.FC<RightInspectorProps> = ({
@@ -220,6 +222,8 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
   onUpdateEntity,
   onDeleteEntity,
   onDuplicateEntity,
+  rememberAssetScale,
+  onRememberAssetScaleChange,
 }) => {
   const { messages, t } = useI18n();
   const theme = resolveTheme(doc.themeId, doc.themeOverrides);
@@ -503,8 +507,8 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
             </div>
             <input
               type="range"
-              min="0.5"
-              max="2.5"
+              min={Math.min(0.1, prop.scale)}
+              max={Math.max(4, prop.scale)}
               step="0.05"
               value={prop.scale}
               onChange={(e) =>
@@ -513,6 +517,16 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
               className="w-full accent-indigo-500"
             />
           </div>
+
+          <label className="flex items-center gap-2 text-[11px] text-[#D1D5DB] select-none">
+            <input
+              type="checkbox"
+              checked={rememberAssetScale}
+              onChange={(event) => onRememberAssetScaleChange(event.target.checked)}
+              className="accent-indigo-500"
+            />
+            <span>{t('inspector.rememberAssetScale')}</span>
+          </label>
 
           <div className="space-y-1">
             <div className="flex justify-between text-[11px] text-[#9CA3AF]">
@@ -1432,6 +1446,15 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
 
       {activeTool === 'prop' && (
         <div className="p-3 border-b border-[#2D333D] space-y-2.5">
+          <label className="flex items-center gap-2 text-[11px] text-[#D1D5DB] select-none">
+            <input
+              type="checkbox"
+              checked={rememberAssetScale}
+              onChange={(event) => onRememberAssetScaleChange(event.target.checked)}
+              className="accent-indigo-500"
+            />
+            <span>{t('inspector.rememberAssetScale')}</span>
+          </label>
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
               {t('inspector.propLibrary')}

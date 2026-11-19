@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Check,
@@ -26,6 +26,8 @@ import { MAP_THEMES, PresetId, resolveTheme, ThemeColorKey } from '../data/prese
 import { useI18n, type Locale } from '../i18n';
 import { MapThemeId } from '../types/dungeon';
 import type { IsoViewMode } from '../utils/isoProjection';
+import { isSnapDivisor, type SnapDivisor } from '../utils/geometry';
+import { MAX_GRID_SIZE, MIN_GRID_SIZE } from '../utils/scaleDocument';
 
 interface TopBarProps {
   title: string;
@@ -37,8 +39,10 @@ interface TopBarProps {
   zoom: number;
   onZoomChange: (zoom: number) => void;
   onResetView: () => void;
-  snapEnabled: boolean;
-  onToggleSnap: () => void;
+  snapDivisor: SnapDivisor;
+  onChangeSnapDivisor: (divisor: SnapDivisor) => void;
+  gridSize: number;
+  onChangeGridSize: (size: number) => void;
   showGrid: boolean;
   onToggleGrid: () => void;
   viewMode: IsoViewMode;
@@ -75,8 +79,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   zoom,
   onZoomChange,
   onResetView,
-  snapEnabled,
-  onToggleSnap,
+  snapDivisor,
+  onChangeSnapDivisor,
+  gridSize,
+  onChangeGridSize,
   showGrid,
   onToggleGrid,
   viewMode,
@@ -106,6 +112,20 @@ export const TopBar: React.FC<TopBarProps> = ({
   const activeThemeName = messages.themes[themeId].name;
   const jsonInputRef = useRef<HTMLInputElement | null>(null);
   const presetItems: PresetId[] = ['starter', 'caverns', 'fortress', 'settlement', 'empty'];
+  const [gridDraft, setGridDraft] = useState(String(gridSize));
+  useEffect(() => {
+    setGridDraft(String(gridSize));
+  }, [gridSize]);
+
+  const commitGridSize = () => {
+    const next = Math.round(Number(gridDraft));
+    if (!Number.isFinite(next) || next < MIN_GRID_SIZE || next > MAX_GRID_SIZE) {
+      setGridDraft(String(gridSize));
+      return;
+    }
+    setGridDraft(String(next));
+    if (next !== gridSize) onChangeGridSize(next);
+  };
 
   return (
     <header className="h-12 px-3 bg-[#141619] border-b border-[#2D333D] flex items-center justify-between gap-2 z-30 shrink-0">
@@ -309,18 +329,29 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
 
         <div className="hidden lg:flex items-center bg-[#1C1F24] border border-[#2D333D] rounded-md p-0.5">
-          <button
-            onClick={onToggleSnap}
-            title={t('topBar.snap')}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-              snapEnabled
-                ? 'bg-indigo-600/25 text-indigo-300'
-                : 'text-[#9CA3AF] hover:text-[#F1F3F5]'
+          <label
+            className={`flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium ${
+              snapDivisor > 0 ? 'bg-indigo-600/25 text-indigo-300' : 'text-[#9CA3AF]'
             }`}
+            title={t('topBar.snap')}
           >
             <Magnet className="w-3.5 h-3.5" />
-            <span>{t('topBar.snapLabel')}</span>
-          </button>
+            <select
+              aria-label={t('topBar.snap')}
+              value={snapDivisor}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                if (isSnapDivisor(next)) onChangeSnapDivisor(next);
+              }}
+              className="bg-[#1C1F24] text-xs font-medium text-[#F1F3F5] outline-none"
+            >
+              <option value={0} className="bg-[#1C1F24] text-[#F1F3F5]">{t('topBar.snapOff')}</option>
+              <option value={1} className="bg-[#1C1F24] text-[#F1F3F5]">1</option>
+              <option value={2} className="bg-[#1C1F24] text-[#F1F3F5]">1/2</option>
+              <option value={3} className="bg-[#1C1F24] text-[#F1F3F5]">1/3</option>
+              <option value={4} className="bg-[#1C1F24] text-[#F1F3F5]">1/4</option>
+            </select>
+          </label>
           <button
             onClick={onToggleGrid}
             title={t('topBar.grid')}
@@ -330,6 +361,27 @@ export const TopBar: React.FC<TopBarProps> = ({
           >
             <Grid className="w-3.5 h-3.5" />
           </button>
+          <form
+            className="flex items-center gap-1 px-1.5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              commitGridSize();
+            }}
+          >
+            <input
+              type="number"
+              min={MIN_GRID_SIZE}
+              max={MAX_GRID_SIZE}
+              step={1}
+              value={gridDraft}
+              aria-label={t('topBar.gridSize')}
+              title={t('topBar.gridSize')}
+              onChange={(event) => setGridDraft(event.target.value)}
+              onBlur={commitGridSize}
+              className="w-12 bg-transparent text-right font-mono-tech text-xs text-[#F1F3F5] outline-none"
+            />
+            <span className="text-[10px] text-[#9CA3AF]">px</span>
+          </form>
         </div>
 
         <div className="flex items-center rounded-md border border-[#2D333D] bg-[#1C1F24] p-0.5" role="group" aria-label={t('topBar.viewIsoTitle')}>
@@ -502,7 +554,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   <ImageIcon className="w-4 h-4 text-sky-400 shrink-0" />
                   <div>
                     <div className="text-xs font-medium text-[#F1F3F5]">{t('topBar.exportPng')}</div>
-                    <div className="text-[10px] text-[#9CA3AF]">{t('topBar.exportPngHint')}</div>
+                    <div className="text-[10px] text-[#9CA3AF]">{t('topBar.exportPngHint', { px: gridSize })}</div>
                   </div>
                 </button>
                 <div className="my-1 border-t border-[#2D333D]" />

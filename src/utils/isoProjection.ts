@@ -99,6 +99,19 @@ function applyIsoInverse(x: number, y: number, quarter: IsoQuarter): [number, nu
   return [a * x + c * y, b * x + d * y];
 }
 
+/** Inverse of the upright gizmo shear, so a pointer delta matches the handle's local space. */
+export function gizmoLocalDelta(
+  dx: number,
+  dy: number,
+  upright: boolean,
+  quarter: IsoQuarter
+): [number, number] {
+  if (!upright) return [dx, dy];
+  const { a, b, c, d } = roundedIsoInverse(quarter);
+  const det = a * d - c * b || 1;
+  return [(d * dx - c * dy) / det, (-b * dx + a * dy) / det];
+}
+
 export type PropArtworkFrame = 'plane' | 'upright';
 
 /** Rotate and flip, then pre-shear upright art so the iso view shows it straight. */

@@ -33,6 +33,7 @@ import {
   findNearestWallSnap,
   GRID_SIZE,
   multiPolygonToSvgPath,
+  type SnapDivisor,
   polygonCentroid,
   polygonEdgeAngle,
   rectToPolygon,
@@ -54,7 +55,9 @@ import { ExteriorLayerGraphics } from './ExteriorArt';
 import { SvgDoorArtwork, SvgPropArtwork, SvgStairArtwork } from './SvgPropArtwork';
 import { draftTexturePaint, FloorTextureResources, FloorTextureStack } from './FloorTextureLayer';
 import { IsoScene } from './IsoScene';
+import { clampPropScale, type AssetScaleIdentity } from '../utils/assetScale';
 import {
+  gizmoLocalDelta,
   isoPlaneInverseMatrix,
   isoPlaneMatrix,
   type IsoQuarter,
@@ -69,7 +72,8 @@ interface MapCanvasProps {
   activeTool: ToolType;
   selectedEntity: SelectedEntity;
   onSelectEntity: (entity: SelectedEntity) => void;
-  snapEnabled: boolean;
+  snapDivisor: SnapDivisor;
+  propScaleFor: (item: AssetScaleIdentity) => number;
   // Tool options
   corridorWidthCells: number;
   corridorElbowMode: boolean;
@@ -129,7 +133,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   activeTool,
   selectedEntity,
   onSelectEntity,
-  snapEnabled,
+  snapDivisor,
+  propScaleFor,
   corridorWidthCells,
   corridorElbowMode,
   onToggleCorridorElbow,
@@ -210,6 +215,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     offsetY: number;
     moved: boolean;
   } | null>(null);
+  const scalingMovedRef = useRef(false);
+  const scalingScaleRef = useRef(1);
+  const [scalingProp, setScalingProp] = useState<{
+    id: string;
+    centerX: number;
+    centerY: number;
+    startScale: number;
+    startDist: number;
+    upright: boolean;
+    quarter: IsoQuarter;
+  } | null>(null);
 
   const [rotatingEntity, setRotatingEntity] = useState<{
     entity: NonNullable<SelectedEntity>;
@@ -228,7 +244,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   // Convert screen mouse event to world coordinates
   const screenToWorld = useCallback(
-    (clientX: number, clientY: number, applySnap = snapEnabled): Point2D => {
+    (clientX: number, clientY: number, applySnap = snapDivisor > 0): Point2D => {
       const rect = svgRootRef.current?.getBoundingClientRect();
       if (!rect) return [0, 0];
       let wx = (clientX - rect.left - pan.x) / zoom;
@@ -236,12 +252,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (viewMode === 'iso' || viewMode === '3d') {
         [wx, wy] = unprojectIsoGround(wx, wy, isoQuarter);
       }
-      if (applySnap) {
-        return [snapToGrid(wx, G, 1), snapToGrid(wy, G, 1)];
+      if (applySnap && snapDivisor > 0) {
+        return [snapToGrid(wx, G, snapDivisor), snapToGrid(wy, G, snapDivisor)];
       }
       return [Math.round(wx), Math.round(wy)];
     },
-    [pan.x, pan.y, zoom, snapEnabled, G, viewMode, isoQuarter]
+    [pan.x, pan.y, zoom, snapDivisor, G, viewMode, isoQuarter]
   );
 
   // Keyboard shortcuts for Space panning & Tab elbow flipping & Escape cancel
@@ -339,14 +355,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Door ghost preview calculation
   const doorPreview = useMemo(() => {
     if (activeTool !== 'door') return null;
-    const snap = findNearestWallSnap(rawCursorWorld[0], rawCursorWorld[1], doc.layers, G * 1.1);
+    const snap = findNearestWallSnap(
+      rawCursorWorld[0],
+      rawCursorWorld[1],
+      doc.layers,
+      G * 1.1,
+      G,
+      snapDivisor
+    );
     return {
       x: snap.snapped ? snap.x : cursorWorld[0],
       y: snap.snapped ? snap.y : cursorWorld[1],
       rotation: snap.snapped ? snap.rotation : pendingRotation,
       snapped: snap.snapped,
     };
-  }, [activeTool, rawCursorWorld, cursorWorld, doc.layers, G, pendingRotation]);
+  }, [activeTool, rawCursorWorld, cursorWorld, doc.layers, G, pendingRotation, snapDivisor]);
 
   // Wheel zoom centered on pointer
   const handleWheel = (e: React.WheelEvent<SVGSVGElement>) => {
@@ -408,7 +431,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     if (e.button !== 0) return;
 
-    const snappedPt = screenToWorld(e.clientX, e.clientY, snapEnabled);
+    const snappedPt = screenToWorld(e.clientX, e.clientY, snapDivisor > 0);
     const rawPt = screenToWorld(e.clientX, e.clientY, false);
 
     if (activeTool === 'texture') {
@@ -520,7 +543,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         x: snappedPt[0],
         y: snappedPt[1],
         rotation: pendingRotation,
-        scale: 1,
+        scale: propScaleFor(activePropPreset),
         kind: activePropPreset.kind,
         svgPropId: activePropPreset.svgPropId,
         pngDataUrl: activePropPreset.pngDataUrl,
@@ -562,11 +585,33 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     const rawPt = screenToWorld(e.clientX, e.clientY, false);
-    const snappedPt = screenToWorld(e.clientX, e.clientY, snapEnabled);
+    const snappedPt = screenToWorld(e.clientX, e.clientY, snapDivisor > 0);
     setCursorWorld(snappedPt);
     setRawCursorWorld(rawPt);
     onCursorWorldMove?.(snappedPt);
     if (viewMode === '3d') return;
+
+    if (scalingProp) {
+      const [lx, ly] = gizmoLocalDelta(
+        rawPt[0] - scalingProp.centerX,
+        rawPt[1] - scalingProp.centerY,
+        scalingProp.upright,
+        scalingProp.quarter
+      );
+      const dist = Math.hypot(lx, ly);
+      if (scalingProp.startDist > 1 && dist > 0) {
+        const next = clampPropScale(
+          scalingProp.startScale * (dist / scalingProp.startDist),
+          scalingProp.startScale
+        );
+        if (next !== scalingScaleRef.current) {
+          scalingMovedRef.current = true;
+          scalingScaleRef.current = next;
+          onUpdateEntity({ kind: 'prop', id: scalingProp.id }, { scale: next }, false);
+        }
+      }
+      return;
+    }
 
     if (texturePaintingRef.current && activeTool === 'texture' && textureMode === 'brush') {
       const radius = (textureBrushCells * G) / 2;
@@ -631,8 +676,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const dx = rawPt[0] - draggingBuilding.startX;
       const dy = rawPt[1] - draggingBuilding.startY;
       const center = polygonCentroid(draggingBuilding.origin);
-      const nextX = snapEnabled && !e.shiftKey ? snapToGrid(center[0] + dx, G, 2) : center[0] + dx;
-      const nextY = snapEnabled && !e.shiftKey ? snapToGrid(center[1] + dy, G, 2) : center[1] + dy;
+      const nextX = snapDivisor > 0 && !e.shiftKey ? snapToGrid(center[0] + dx, G, snapDivisor) : center[0] + dx;
+      const nextY = snapDivisor > 0 && !e.shiftKey ? snapToGrid(center[1] + dy, G, snapDivisor) : center[1] + dy;
       setDraggingBuilding((prev) => (prev ? { ...prev, moved: true } : null));
       onUpdateEntity(
         draggingBuilding.entity,
@@ -646,8 +691,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (draggingEntity) {
       const targetX = rawPt[0] - draggingEntity.offsetX;
       const targetY = rawPt[1] - draggingEntity.offsetY;
-      const finalX = snapEnabled && !e.shiftKey ? snapToGrid(targetX, G, 2) : Math.round(targetX);
-      const finalY = snapEnabled && !e.shiftKey ? snapToGrid(targetY, G, 2) : Math.round(targetY);
+      const finalX = snapDivisor > 0 && !e.shiftKey ? snapToGrid(targetX, G, snapDivisor) : Math.round(targetX);
+      const finalY = snapDivisor > 0 && !e.shiftKey ? snapToGrid(targetY, G, snapDivisor) : Math.round(targetY);
 
       setDraggingEntity((prev) => (prev ? { ...prev, moved: true } : null));
       onUpdateEntity(draggingEntity.entity, { x: finalX, y: finalY }, false);
@@ -674,6 +719,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       return;
     }
     if (viewMode === '3d') return;
+
+    if (scalingProp) {
+      if (scalingMovedRef.current) {
+        onUpdateEntity({ kind: 'prop', id: scalingProp.id }, { scale: scalingScaleRef.current }, true);
+      }
+      scalingMovedRef.current = false;
+      setScalingProp(null);
+      return;
+    }
 
     if (rotatingEntity) {
       onUpdateEntity(rotatingEntity.entity, {}, true);
@@ -793,17 +847,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (viewMode === '3d') return;
     const file = e.dataTransfer.files?.[0];
     if (!file || !file.type.startsWith('image/')) return;
-    const dropPt = screenToWorld(e.clientX, e.clientY, snapEnabled);
+    const dropPt = screenToWorld(e.clientX, e.clientY, snapDivisor > 0);
     readImageFile(file)
       .then(({ dataUrl, width, height }) => {
+        const label = file.name.replace(/\.[^.]+$/, '');
         onPlaceProp({
           x: dropPt[0],
           y: dropPt[1],
           rotation: 0,
-          scale: 1,
+          scale: propScaleFor({ kind: 'png', label, widthPx: width, heightPx: height }),
           kind: 'png',
           pngDataUrl: dataUrl,
-          label: file.name.replace(/\.[^.]+$/, ''),
+          label,
           widthPx: width,
           heightPx: height,
           ...(viewMode === 'iso'
@@ -1772,25 +1827,30 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                 )}`}
                 opacity={0.72}
               >
-                {activePropPreset.kind === 'svg' && activePropPreset.svgPropId ? (
-                  <g transform={`scale(${ink})`}>
-                    <SvgPropArtwork
-                      propId={activePropPreset.svgPropId}
-                      width={activePropPreset.widthPx / ink}
-                      height={activePropPreset.heightPx / ink}
-                      inkColor="#2563EB"
-                      fillColor={theme.floorFill}
+                {(() => {
+                  const previewScale = propScaleFor(activePropPreset);
+                  const previewW = activePropPreset.widthPx * previewScale;
+                  const previewH = activePropPreset.heightPx * previewScale;
+                  return activePropPreset.kind === 'svg' && activePropPreset.svgPropId ? (
+                    <g transform={`scale(${ink})`}>
+                      <SvgPropArtwork
+                        propId={activePropPreset.svgPropId}
+                        width={previewW / ink}
+                        height={previewH / ink}
+                        inkColor="#2563EB"
+                        fillColor={theme.floorFill}
+                      />
+                    </g>
+                  ) : activePropPreset.pngDataUrl || activePropPreset.assetPath ? (
+                    <image
+                      href={activePropPreset.pngDataUrl || resolveAssetUrl(activePropPreset.assetPath)}
+                      x={-previewW / 2}
+                      y={-previewH / 2}
+                      width={previewW}
+                      height={previewH}
                     />
-                  </g>
-                ) : activePropPreset.pngDataUrl || activePropPreset.assetPath ? (
-                  <image
-                    href={activePropPreset.pngDataUrl || resolveAssetUrl(activePropPreset.assetPath)}
-                    x={-activePropPreset.widthPx / 2}
-                    y={-activePropPreset.heightPx / 2}
-                    width={activePropPreset.widthPx}
-                    height={activePropPreset.heightPx}
-                  />
-                ) : null}
+                  ) : null;
+                })()}
               </g>
             )}
 
@@ -1872,6 +1932,53 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                   }}
                 />
               </g>
+              {selectedEntity?.kind === 'prop' && (
+                <rect
+                  x={selectionInfo.radius - Math.max(4 * ink, 5 / zoom)}
+                  y={-Math.max(4 * ink, 5 / zoom)}
+                  width={Math.max(8 * ink, 10 / zoom)}
+                  height={Math.max(8 * ink, 10 / zoom)}
+                  rx={Math.max(1.5 * ink, 2 / zoom)}
+                  fill="#3B82F6"
+                  stroke="#FFFFFF"
+                  strokeWidth={1.2 * ink}
+                  className="cursor-ew-resize"
+                  style={{ pointerEvents: 'auto' }}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    const prop = doc.props.find((item) => item.id === selectedEntity.id);
+                    if (!prop) return;
+                    const rawPt = screenToWorld(event.clientX, event.clientY, false);
+                    const upright = prop.artwork === 'upright';
+                    const quarter = prop.artworkQuarter ?? 0;
+                    const [lx, ly] = gizmoLocalDelta(
+                      rawPt[0] - selectionInfo.x,
+                      rawPt[1] - selectionInfo.y,
+                      upright,
+                      quarter
+                    );
+                    const startDist = Math.hypot(lx, ly);
+                    if (startDist < 1) return;
+                    scalingMovedRef.current = false;
+                    scalingScaleRef.current = prop.scale || 1;
+                    try {
+                      svgRootRef.current?.setPointerCapture(event.pointerId);
+                    } catch {
+                      // The drag still tracks while the pointer stays over the canvas.
+                    }
+                    setScalingProp({
+                      id: prop.id,
+                      centerX: selectionInfo.x,
+                      centerY: selectionInfo.y,
+                      startScale: prop.scale || 1,
+                      startDist,
+                      upright,
+                      quarter,
+                    });
+                  }}
+                />
+              )}
             </g>
           )}
           </g>

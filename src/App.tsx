@@ -51,7 +51,9 @@ import {
   projectBounds,
   worldAtCanvasCenter,
 } from './utils/isoProjection';
-import { corridorPathToMultiPolygon, generateBuildingsInRegion, subtractGeometry, unionGeometry } from './utils/geometry';
+import { assetScaleKey, type AssetScaleIdentity } from './utils/assetScale';
+import { GRID_SIZE, corridorPathToMultiPolygon, generateBuildingsInRegion, subtractGeometry, unionGeometry, type SnapDivisor } from './utils/geometry';
+import { MAX_GRID_SIZE, MIN_GRID_SIZE, scaleDocument } from './utils/scaleDocument';
 import { eraseRoadPolygons, eraseTexturePaints } from './utils/texturePaint';
 
 const MAX_HISTORY = 50;
@@ -67,7 +69,22 @@ export function App() {
   // Active tool & sub-options
   const [activeTool, setActiveTool] = useState<ToolType>('room');
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity>(null);
-  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [snapDivisor, setSnapDivisor] = useState<SnapDivisor>(1);
+  const [rememberAssetScale, setRememberAssetScale] = useState(true);
+  const [assetScales, setAssetScales] = useState<Record<string, number>>({});
+  const rememberAssetScaleRef = useRef(true);
+  rememberAssetScaleRef.current = rememberAssetScale;
+  const docRef = useRef<DungeonDocument | null>(null);
+  docRef.current = doc;
+
+  const propScaleFor = useCallback(
+    (item: AssetScaleIdentity) => {
+      if (!rememberAssetScale) return 1;
+      const stored = assetScales[assetScaleKey(item)];
+      return stored === undefined ? 1 : stored;
+    },
+    [assetScales, rememberAssetScale]
+  );
 
   const [corridorWidthCells, setCorridorWidthCells] = useState(1);
   const [corridorElbowMode, setCorridorElbowMode] = useState(true);
@@ -534,6 +551,19 @@ export function App() {
       patch: Record<string, unknown>,
       commitHistory = true
     ) => {
+      if (
+        commitHistory &&
+        entity.kind === 'prop' &&
+        typeof patch.scale === 'number' &&
+        rememberAssetScaleRef.current
+      ) {
+        const item = docRef.current?.props.find((prop) => prop.id === entity.id);
+        if (item) {
+          const key = assetScaleKey(item);
+          const scale = patch.scale;
+          setAssetScales((prev) => (prev[key] === scale ? prev : { ...prev, [key]: scale }));
+        }
+      }
       const applyPatch = (d: DungeonDocument): DungeonDocument => {
         if (entity.kind === 'door') {
           return {
@@ -1020,8 +1050,18 @@ export function App() {
         zoom={zoom}
         onZoomChange={setZoom}
         onResetView={() => fitViewToDocument(doc)}
-        snapEnabled={snapEnabled}
-        onToggleSnap={() => setSnapEnabled((s) => !s)}
+        snapDivisor={snapDivisor}
+        onChangeSnapDivisor={setSnapDivisor}
+        gridSize={doc.gridSize || GRID_SIZE}
+        onChangeGridSize={(next) => {
+          const size = Math.round(next);
+          if (size < MIN_GRID_SIZE || size > MAX_GRID_SIZE) return;
+          commitDocChange((prev) => {
+            const current = prev.gridSize || GRID_SIZE;
+            if (size === current) return prev;
+            return scaleDocument(prev, size / current, size);
+          });
+        }}
         showGrid={doc.showGrid}
         onToggleGrid={() => setDoc((prev) => ({ ...prev, showGrid: !prev.showGrid }))}
         viewMode={viewMode}
@@ -1065,7 +1105,8 @@ export function App() {
             activeTool={activeTool}
             selectedEntity={selectedEntity}
             onSelectEntity={setSelectedEntity}
-            snapEnabled={snapEnabled}
+            snapDivisor={snapDivisor}
+            propScaleFor={propScaleFor}
             corridorWidthCells={corridorWidthCells}
             corridorElbowMode={corridorElbowMode}
             onToggleCorridorElbow={() => setCorridorElbowMode((v) => !v)}
@@ -1184,6 +1225,8 @@ export function App() {
           onUpdateEntity={handleUpdateEntity}
           onDeleteEntity={handleDeleteEntity}
           onDuplicateEntity={handleDuplicateEntity}
+          rememberAssetScale={rememberAssetScale}
+          onRememberAssetScaleChange={setRememberAssetScale}
         />
       </div>
 
