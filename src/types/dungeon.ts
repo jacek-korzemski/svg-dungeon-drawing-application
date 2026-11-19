@@ -242,6 +242,42 @@ export type SelectedEntity =
   | { kind: 'building'; layerId: string; polyIndex: number }
   | null;
 
+/** Logical rooms and corridors kept so a file can be summarized back into cells. */
+export interface AuthoredRoom {
+  id: string;
+  layerId: string;
+  /** Left edge, in cells. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  name?: string;
+  number?: string;
+}
+
+export interface AuthoredCorridor {
+  id: string;
+  layerId: string;
+  from?: string;
+  to?: string;
+  /** Polyline vertices in cells. */
+  points: Point2D[];
+  widthCells: number;
+}
+
+export interface MapNote {
+  code: string;
+  message: string;
+}
+
+export interface MapAuthoring {
+  rooms: AuthoredRoom[];
+  corridors: AuthoredCorridor[];
+  /** Door id to the two room ids it was meant to connect. */
+  doorLinks: Record<string, [string, string]>;
+  notes: MapNote[];
+}
+
 export interface DungeonDocument {
   title: string;
   gridSize: number; // default 64px = 5ft
@@ -256,6 +292,11 @@ export interface DungeonDocument {
   stairs: StairItem[];
   props: PropItem[];
   labels: LabelItem[];
+  /**
+   * Present on maps built by the agent tools. The editor keeps the field on import
+   * and on save. Cell coordinates stay valid when the grid size is scaled.
+   */
+  authoring?: MapAuthoring;
 }
 
 /** Older projects omit the field and stay dungeon interiors. */

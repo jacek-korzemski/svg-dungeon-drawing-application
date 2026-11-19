@@ -1,3 +1,4 @@
+import { FONT_MANIFEST, fontPublicUrl } from '../fontAssets';
 import { resolveTheme } from '../data/presets';
 import { DungeonDocument } from '../types/dungeon';
 import {
@@ -7,6 +8,9 @@ import {
   multiPolygonToSvgPath,
 } from './geometry';
 import { IsoQuarter, IsoViewMode, isoPlaneMatrix, projectBounds, propVisualCorners } from './isoProjection';
+
+/** Chromium refuses canvases larger than this on a side. */
+export const MAX_PNG_EDGE = 16384;
 
 export interface ExportView {
   mode: IsoViewMode;
@@ -187,6 +191,8 @@ export async function buildCleanExportSvg(
     innerLayersMarkup = `<g transform="${isoPlaneMatrix(view.quarter, 0)}">${innerLayersMarkup}</g>`;
   }
 
+  const fontCss = await exportFontCss();
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
      xmlns:xlink="http://www.w3.org/1999/xlink"
@@ -195,6 +201,7 @@ export async function buildCleanExportSvg(
      height="${bounds.height}">
   <title>${escapeXml(doc.title)}</title>
   <defs>
+    ${fontCss ? `<style type="text/css"><![CDATA[\n${fontCss}\n]]></style>` : ''}
     <!-- Jinkline Diagonal Crosshatch Pattern -->
     <pattern id="export-hatch-pattern" width="${10 * ink}" height="${10 * ink}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
       <line x1="0" y1="0" x2="0" y2="${10 * ink}" stroke="${theme.hatchStroke}" stroke-width="${1.4 * ink}" stroke-opacity="0.42" />
@@ -263,14 +270,20 @@ export async function downloadSvgFile(
   triggerFileDownload(blob, `${slug}.svg`);
 }
 
-export async function downloadPngFile(
+export async function renderPngBlob(
   doc: DungeonDocument,
   viewportGroupEl: SVGGElement | null,
   view: ExportView = FLAT_VIEW
-): Promise<void> {
+): Promise<Blob> {
   const svgStr = await buildCleanExportSvg(doc, viewportGroupEl, view);
   const bounds = exportBounds(doc, view);
-  const scale = 1; // 1 world px = 1 PNG px, so one cell is 64 px
+  const width = Math.ceil(bounds.width);
+  const height = Math.ceil(bounds.height);
+  if (width > MAX_PNG_EDGE || height > MAX_PNG_EDGE) {
+    throw new Error(
+      `PNG przekracza limit płótna: ${width}×${height} px (maks. ${MAX_PNG_EDGE}).`
+    );
+  }
 
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -279,36 +292,77 @@ export async function downloadPngFile(
 
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = bounds.width * scale;
-      canvas.height = bounds.height * scale;
+      canvas.width = width;
+      canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
         URL.revokeObjectURL(url);
         reject(new Error('Canvas context unavailable'));
         return;
       }
-      ctx.scale(scale, scale);
-      ctx.drawImage(img, 0, 0, bounds.width, bounds.height);
+      ctx.drawImage(img, 0, 0, width, height);
       URL.revokeObjectURL(url);
 
       canvas.toBlob((pngBlob) => {
-        if (pngBlob) {
-          const slug = doc.title.toLowerCase().replace(/[^a-z0-9ąęćłńóśźż]+/gi, '-') || 'dungeon';
-          triggerFileDownload(pngBlob, `${slug}.png`);
-          resolve();
-        } else {
-          reject(new Error('Failed to create PNG blob'));
-        }
+        if (pngBlob) resolve(pngBlob);
+        else reject(new Error('Failed to create PNG blob'));
       }, 'image/png');
     };
 
     img.onerror = (err) => {
       URL.revokeObjectURL(url);
-      reject(err);
+      reject(err instanceof Error ? err : new Error('Nie udało się zrasteryzować SVG do PNG'));
     };
 
     img.src = url;
   });
+}
+
+export async function renderPngDataUrl(
+  doc: DungeonDocument,
+  viewportGroupEl: SVGGElement | null,
+  view: ExportView = FLAT_VIEW
+): Promise<string> {
+  return blobToDataUrl(await renderPngBlob(doc, viewportGroupEl, view));
+}
+
+export async function downloadPngFile(
+  doc: DungeonDocument,
+  viewportGroupEl: SVGGElement | null,
+  view: ExportView = FLAT_VIEW
+): Promise<void> {
+  const pngBlob = await renderPngBlob(doc, viewportGroupEl, view);
+  const slug = doc.title.toLowerCase().replace(/[^a-z0-9ąęćłńóśźż]+/gi, '-') || 'dungeon';
+  triggerFileDownload(pngBlob, `${slug}.png`);
+}
+
+async function exportFontCss(): Promise<string> {
+  if (typeof fetch !== 'function') return '';
+  const faces = FONT_MANIFEST.filter((face) => face.embed);
+  const css: string[] = [];
+  for (const face of faces) {
+    try {
+      const response = await fetch(fontPublicUrl(face.file));
+      if (!response.ok) continue;
+      const base64 = arrayBufferToBase64(await response.arrayBuffer());
+      css.push(
+        `@font-face{font-family:'${face.family}';font-style:${face.style};font-weight:${face.weight};font-display:swap;src:url(data:font/woff2;base64,${base64}) format('woff2');unicode-range:${face.unicodeRange};}`
+      );
+    } catch {
+      // A missing font file leaves the SVG on the fallback stack.
+    }
+  }
+  return css.join('\n');
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
 }
 
 export function downloadJsonProject(doc: DungeonDocument) {

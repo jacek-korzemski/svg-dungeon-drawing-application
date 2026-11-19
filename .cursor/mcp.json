@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "jinkline": {
+      "command": "node",
+      "args": ["--import", "tsx", "mcp/server.ts"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

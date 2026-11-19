@@ -7,7 +7,7 @@ import { RandomMapModal } from './components/RandomMapModal';
 import { SvgInspectorModal } from './components/SvgInspectorModal';
 import { TopBar } from './components/TopBar';
 import { createEmptyLayer, createPresetDungeon, PresetId, SVG_PROP_CATALOG, ThemeColorKey } from './data/presets';
-import { defaultFloorTexturePath } from './data/textureLibrary';
+import { defaultFloorTexturePath, whenFloorTexturesReady } from './data/textureLibrary';
 import {
   BuildingStyle,
   DistrictAngleMode,
@@ -37,12 +37,15 @@ import {
   layerEnvironment,
 } from './types/dungeon';
 import {
+  buildCleanExportSvg,
   computeDocumentBounds,
   downloadJsonProject,
   downloadPngFile,
   downloadSvgFile,
+  renderPngDataUrl,
   type ExportView,
 } from './utils/exportDungeon';
+import type { JinklineExportView } from './jinklineExport';
 import {
   type CameraFrame,
   type IsoQuarter,
@@ -52,7 +55,17 @@ import {
   worldAtCanvasCenter,
 } from './utils/isoProjection';
 import { assetScaleKey, type AssetScaleIdentity } from './utils/assetScale';
-import { GRID_SIZE, corridorPathToMultiPolygon, generateBuildingsInRegion, subtractGeometry, unionGeometry, type SnapDivisor } from './utils/geometry';
+import { GRID_SIZE, generateBuildingsInRegion, type SnapDivisor } from './utils/geometry';
+import {
+  addRoad,
+  addStandaloneWall,
+  carveFloor,
+  createEntityId,
+  placeDoor,
+  placeLabel,
+  placeProp,
+  placeStair,
+} from './document/ops';
 import { MAX_GRID_SIZE, MIN_GRID_SIZE, scaleDocument } from './utils/scaleDocument';
 import { eraseRoadPolygons, eraseTexturePaints } from './utils/texturePaint';
 
@@ -338,21 +351,7 @@ export function App() {
   // Carve or subtract floor geometry on active layer
   const handleCarveFloor = useCallback(
     (polygonOrMulti: Point2D[][][], mode: 'add' | 'subtract') => {
-      commitDocChange((prev) => {
-        const layers = prev.layers.map((layer) => {
-          if (layer.id !== prev.activeLayerId) return layer;
-          const nextGeo =
-            mode === 'add'
-              ? unionGeometry(layer.geometry, polygonOrMulti)
-              : subtractGeometry(layer.geometry, polygonOrMulti);
-          return {
-            ...layer,
-            visible: true,
-            geometry: nextGeo,
-          };
-        });
-        return { ...prev, layers };
-      });
+      commitDocChange((prev) => carveFloor(prev, polygonOrMulti, mode));
     },
     [commitDocChange]
   );
@@ -360,58 +359,18 @@ export function App() {
   // Add standalone internal partition wall
   const handleAddStandaloneWall = useCallback(
     (points: Point2D[]) => {
-      commitDocChange((prev) => {
-        const layers = prev.layers.map((layer) => {
-          if (layer.id !== prev.activeLayerId) return layer;
-          const exterior = layerEnvironment(layer) === 'exterior';
-          return {
-            ...layer,
-            standaloneWalls: [
-              ...layer.standaloneWalls,
-              {
-                id: `sw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                points,
-                wallStyle: layer.wallStyle,
-                thickness: exterior ? 14 : 8,
-                ...(exterior
-                  ? { exteriorWallStyle, hasTowers: exteriorWallTowers }
-                  : {}),
-              },
-            ],
-          };
-        });
-        return { ...prev, layers };
-      });
+      commitDocChange((prev) =>
+        addStandaloneWall(prev, points, { exteriorWallStyle, hasTowers: exteriorWallTowers })
+      );
     },
     [commitDocChange, exteriorWallStyle, exteriorWallTowers]
   );
 
   const handleAddRoad = useCallback(
     (points: Point2D[]) => {
-      commitDocChange((prev) => {
-        const width = corridorWidthCells * (prev.gridSize || 64);
-        const polygon = corridorPathToMultiPolygon(points, width);
-        if (!polygon.length) return prev;
-        return {
-          ...prev,
-          layers: prev.layers.map((layer) => {
-            if (layer.id !== prev.activeLayerId || layerEnvironment(layer) !== 'exterior') return layer;
-            return {
-              ...layer,
-              roads: [
-                ...(layer.roads ?? []),
-                {
-                  id: `rd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                  points,
-                  width,
-                  style: roadStyle,
-                  polygon,
-                },
-              ],
-            };
-          }),
-        };
-      });
+      commitDocChange((prev) =>
+        addRoad(prev, points, corridorWidthCells * (prev.gridSize || 64), roadStyle)
+      );
     },
     [commitDocChange, corridorWidthCells, roadStyle]
   );
@@ -500,44 +459,29 @@ export function App() {
   // Place Door / Stair / Prop / Label
   const handlePlaceDoor = useCallback(
     (door: Omit<DoorItem, 'id'>) => {
-      const id = `dr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      commitDocChange((prev) => ({
-        ...prev,
-        doors: [...prev.doors, { ...door, id }],
-      }));
+      commitDocChange((prev) => placeDoor(prev, door));
     },
     [commitDocChange]
   );
 
   const handlePlaceStair = useCallback(
     (stair: Omit<StairItem, 'id'>) => {
-      const id = `st-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      commitDocChange((prev) => ({
-        ...prev,
-        stairs: [...prev.stairs, { ...stair, id }],
-      }));
+      commitDocChange((prev) => placeStair(prev, stair));
     },
     [commitDocChange]
   );
 
   const handlePlaceProp = useCallback(
     (prop: Omit<PropItem, 'id'>) => {
-      const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      commitDocChange((prev) => ({
-        ...prev,
-        props: [...prev.props, { ...prop, id }],
-      }));
+      commitDocChange((prev) => placeProp(prev, prop));
     },
     [commitDocChange]
   );
 
   const handlePlaceLabel = useCallback(
     (label: Omit<LabelItem, 'id'>) => {
-      const id = `lb-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      commitDocChange((prev) => ({
-        ...prev,
-        labels: [...prev.labels, { ...label, id }],
-      }));
+      const id = createEntityId('lb');
+      commitDocChange((prev) => placeLabel(prev, label, id));
       setSelectedEntity({ kind: 'label', id });
       setActiveTool('select');
     },
@@ -1014,6 +958,62 @@ export function App() {
     [viewMode]
   );
 
+  const exportReady = useRef<(() => void) | null>(null);
+  const loadDocumentForExport = useCallback((next: DungeonDocument, view?: JinklineExportView) => {
+    return new Promise<void>((resolve) => {
+      exportReady.current = resolve;
+      lastCommittedDocRef.current = next;
+      setPast([]);
+      setFuture([]);
+      setSelectedEntity(null);
+      if (view?.mode) setViewMode(view.mode);
+      if (view?.quarter !== undefined) setIsoQuarter(view.quarter);
+      if (view?.wallHeightCells !== undefined) setWallHeightCells(view.wallHeightCells);
+      setDoc(next);
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancel = false;
+    const resolve = exportReady.current;
+    window.__jinkline = {
+      loadDocument: loadDocumentForExport,
+      exportSvg: () => {
+        const viewport = activeViewport();
+        if (!viewport) throw new Error('Widok mapy nie jest jeszcze gotowy do eksportu.');
+        return buildCleanExportSvg(doc, viewport, exportView);
+      },
+      exportPng: () => {
+        const viewport = activeViewport();
+        if (!viewport) throw new Error('Widok mapy nie jest jeszcze gotowy do eksportu.');
+        return renderPngDataUrl(doc, viewport, exportView);
+      },
+    };
+    if (!resolve) {
+      return () => {
+        cancel = true;
+      };
+    }
+    void (async () => {
+      await document.fonts?.ready;
+      await Promise.race([
+        whenFloorTexturesReady(),
+        new Promise<void>((done) => {
+          window.setTimeout(done, 8000);
+        }),
+      ]);
+      await new Promise<void>((done) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => done()));
+      });
+      if (cancel) return;
+      exportReady.current = null;
+      resolve();
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [activeViewport, doc, exportView, loadDocumentForExport]);
+
   // Export handlers
   const handleExportSvg = async () => {
     try {
@@ -1028,8 +1028,9 @@ export function App() {
     try {
       await downloadPngFile(doc, activeViewport(), exportView);
       showToast(t('toast.pngExported'));
-    } catch {
-      showToast(t('toast.pngFailed'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      showToast(message.startsWith('PNG przekracza') ? message : t('toast.pngFailed'));
     }
   };
 

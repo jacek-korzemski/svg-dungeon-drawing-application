@@ -66,12 +66,34 @@ function ensureTextureSizes(): void {
       version += 1;
       listeners.forEach((listener) => listener());
     };
+    img.onerror = () => {
+      if (sizes.has(texture.path)) return;
+      sizes.set(texture.path, { width: 192, height: 192 });
+      version += 1;
+      listeners.forEach((listener) => listener());
+    };
     img.src = texture.url;
   }
 }
 
 export function texturePixelSize(path: string): { width: number; height: number } {
   return sizes.get(path) ?? { width: 192, height: 192 };
+}
+
+/** Resolves when every floor texture has a measured size, including failed loads. */
+export function whenFloorTexturesReady(): Promise<void> {
+  if (typeof Image === 'undefined' || FLOOR_TEXTURES.length === 0) return Promise.resolve();
+  ensureTextureSizes();
+  if (sizes.size >= FLOOR_TEXTURES.length) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onChange = () => {
+      if (sizes.size < FLOOR_TEXTURES.length) return;
+      listeners.delete(onChange);
+      resolve();
+    };
+    listeners.add(onChange);
+    onChange();
+  });
 }
 
 /** Bumps when native texture sizes finish loading, so patterns can retile. */
